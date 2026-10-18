@@ -306,14 +306,15 @@ Kind classify(const std::string &path) {
   return Kind::Unsupported;
 }
 
-/* .mp4 rename, and a video or image with an archive glued on the end.
-   Not a general "any extension" scan, and not pixel steganography. */
+/* Media carriers, self-extracting executables, and content-detected custom
+   suffixes such as .zipsc. An executable is only read here; it is never run. */
 bool is_disguise_carrier(const std::string &path) {
   std::string base = basename_lower(path);
   return ends_with(base, ".mp4") || ends_with(base, ".m4v") || ends_with(base, ".mov") ||
          ends_with(base, ".jpg") || ends_with(base, ".jpeg") || ends_with(base, ".png") ||
          ends_with(base, ".gif") || ends_with(base, ".bmp") || ends_with(base, ".webp") ||
-         ends_with(base, ".avi") || ends_with(base, ".mkv") || ends_with(base, ".webm");
+         ends_with(base, ".avi") || ends_with(base, ".mkv") || ends_with(base, ".webm") ||
+         ends_with(base, ".exe") || ends_with(base, ".sfx") || ends_with(base, ".zipsc");
 }
 
 using CreateObjectFn = HRESULT(STDAPICALLTYPE *)(const GUID *, const GUID *, void **);
@@ -1968,6 +1969,34 @@ void scan_appended_signatures(const std::string &path, uint64_t begin, uint64_t 
   if (tail.size() > 32) tail.erase(tail.begin(), tail.end() - 32);
 }
 
+/* A self-extracting executable keeps a ZIP/7z/RAR payload after its PE stub.
+   Scan the beginning of the file as well as the tail; the stub is normally
+   much smaller than this window. */
+void scan_stub_signatures(const std::string &path, uint64_t file_size, std::vector<SliceHit> &hits) {
+  constexpr uint64_t kStubWindow = 8ull << 20;
+  const uint64_t end = file_size < kStubWindow ? file_size : kStubWindow;
+  const uint64_t overlap = 16;
+  std::vector<unsigned char> buf(1u << 20);
+  uint64_t pos = 0;
+  while (pos < end) {
+    size_t want = buf.size();
+    if (end - pos < want) want = static_cast<size_t>(end - pos);
+    size_t got = 0;
+    if (!read_at(path, pos, buf.data(), want, &got) || got < 6) break;
+    for (size_t i = 0; i + 6 <= got; ++i) {
+      const unsigned char *p = buf.data() + i;
+      const uint64_t off = pos + i;
+      if (is_7z_sig(p)) remember_hit(hits, Kind::SevenZ, off, 64);
+      else if (i + 7 <= got && is_rar_sig(p)) remember_hit(hits, Kind::Rar, off, 64);
+      else if (is_zip_local(p)) remember_hit(hits, Kind::Zip, off, 64);
+    }
+    if (pos + got >= end) break;
+    const uint64_t step = got > overlap ? got - overlap : got;
+    if (step == 0) break;
+    pos += step;
+  }
+}
+
 ArchiverResult open_disguised(ArchiverArchive *archive, const std::string &path, PasswordState &password,
                               uint64_t scan_window) {
   std::vector<SliceHit> hits;
@@ -1986,6 +2015,13 @@ ArchiverResult open_disguised(ArchiverArchive *archive, const std::string &path,
   }
   uint64_t zip_at = 0;
   if (zip_start_from_eocd(path, file_size, &zip_at)) remember_hit(hits, Kind::Zip, zip_at);
+
+  const std::string base = basename_lower(path);
+  if (ends_with(base, ".exe") || ends_with(base, ".sfx") || ends_with(base, ".zipsc")) {
+    std::vector<SliceHit> stub;
+    scan_stub_signatures(path, file_size, stub);
+    for (const SliceHit &hit : stub) remember_hit(hits, hit.kind, hit.offset);
+  }
 
   std::vector<SliceHit> jpeg;
   std::vector<SliceHit> tail;

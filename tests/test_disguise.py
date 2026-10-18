@@ -128,12 +128,18 @@ def main():
 
         prefix = mp4_bytes(b"\x00" * (256 * 1024))
         suffix = b"MOOVTRAILER" * 1000
+        # A real PE stub is not needed to exercise the reader; the executable
+        # path is only scanned for an embedded archive and is never run.
+        exe_stub = b"MZ" + b"\x00" * 4094
         containers = {
             "zip64.mp4": zip64_bytes(payload),
             "zip64-prefixed.mp4": prefix + zip64_bytes(payload),
             "zip64-trailing.mp4": prefix + zip64_bytes(payload) + suffix,
             "zip-prefixed.mp4": prefix + zip_bytes,
             "zip-trailing.mp4": prefix + zip_bytes + suffix,
+            "sfx.exe": exe_stub + zip_bytes,
+            "sfx-trailing.exe": exe_stub + zip_bytes + suffix,
+            "custom.zipsc": zip_bytes,
         }
         for name, content in containers.items():
             path = os.path.join(tmp, name)

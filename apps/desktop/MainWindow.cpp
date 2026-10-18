@@ -278,7 +278,8 @@ bool looksLikeArchive(const QString &name) {
       QStringLiteral(".mov"), QStringLiteral(".jpg"), QStringLiteral(".jpeg"),
       QStringLiteral(".png"), QStringLiteral(".gif"), QStringLiteral(".bmp"),
       QStringLiteral(".webp"), QStringLiteral(".avi"), QStringLiteral(".mkv"),
-      QStringLiteral(".webm"), QStringLiteral(".gz"), QStringLiteral(".bz2"),
+      QStringLiteral(".webm"), QStringLiteral(".exe"), QStringLiteral(".sfx"),
+      QStringLiteral(".zipsc"), QStringLiteral(".gz"), QStringLiteral(".bz2"),
       QStringLiteral(".xz"), QStringLiteral(".zst"), QStringLiteral(".zstd"),
       QStringLiteral(".cab"), QStringLiteral(".iso"), QStringLiteral(".udf"),
       QStringLiteral(".wim"), QStringLiteral(".swm"), QStringLiteral(".arj"),
@@ -716,6 +717,11 @@ void MainWindow::activateRow(const QModelIndex &index) {
     if (row->directory) {
       const QString path = row->path;
       enterArchiveFolder(path.endsWith(QLatin1Char('/')) ? path : path + QLatin1Char('/'));
+    } else if (row->archive || looksLikeArchive(row->name)) {
+      // The inner entry cannot be opened directly; run the same default
+      // nested extraction as the toolbar button on the containing archive.
+      const QString path = archivePath_;
+      quickExtract(path);
     }
     return;
   }
@@ -734,7 +740,7 @@ void MainWindow::chooseArchive() {
   const QString path = QFileDialog::getOpenFileName(
       this, QStringLiteral("打开"), directory_,
       QStringLiteral("压缩包 (*.zip *.7z *.tar *.tgz *.tar.gz *.tbz *.tbz2 *.tar.bz2 "
-                     "*.txz *.tar.xz *.tzst *.tar.zst *.rar *.001 *.gz *.bz2 *.xz *.zst *.cab *.iso *.udf *.wim *.swm *.arj *.lzh *.lha *.cpio *.ar *.deb *.rpm *.dmg *.xar *.mp4 *.mkv *.avi *.mov *.m4v *.webm *.jpg *.jpeg *.png *.gif *.bmp *.webp);;所有文件 (*)"));
+                     "*.txz *.tar.xz *.tzst *.tar.zst *.rar *.001 *.gz *.bz2 *.xz *.zst *.cab *.iso *.udf *.wim *.swm *.arj *.lzh *.lha *.cpio *.ar *.deb *.rpm *.dmg *.xar *.mp4 *.mkv *.avi *.mov *.m4v *.webm *.jpg *.jpeg *.png *.gif *.bmp *.webp *.exe *.sfx *.zipsc);;所有文件 (*)"));
   if (!path.isEmpty()) openPath(path);
 }
 
