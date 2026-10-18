@@ -1,12 +1,12 @@
-# 本地归档
+# MilkZip
 
 离线打开、浏览和解压本机压缩包的 Windows 桌面程序。文件和密码都在本机处理，无需账号，不上传文件，也不会运行解压出的程序。
 
-当前版本：[**v0.5.0**](https://github.com/qgmzxsn/local-archiver/releases/tag/v0.5.0)。
+当前版本：[**v0.5.1**](https://github.com/qgmzxsn/milkzip/releases/tag/v0.5.1)。
 
-[**下载 Windows 64 位便携版**](https://github.com/qgmzxsn/local-archiver/releases/download/v0.5.0/LocalArchiver-0.5.0-windows-x64-portable.zip) · [校验文件](https://github.com/qgmzxsn/local-archiver/releases/download/v0.5.0/SHA256SUMS.txt)
+[**下载 Windows 64 位便携版**](https://github.com/qgmzxsn/milkzip/releases/download/v0.5.1/milkzip-0.5.1-windows-x64-portable.zip) · [校验文件](https://github.com/qgmzxsn/milkzip/releases/download/v0.5.1/SHA256SUMS.txt)
 
-完整解压 ZIP 后运行 `local-archiver.exe`，保留旁边所有 DLL、platforms 和许可文件。无需另装 Qt 或 7-Zip。v0.3.0 保留在历史发行版中。
+完整解压 ZIP 后运行 `milkzip.exe`，保留旁边所有 DLL、platforms 和许可文件。无需另装 Qt 或 7-Zip。v0.3.0 保留在历史发行版中。
 
 ![Windows 实际界面](docs/screenshots/main-window.png)
 
@@ -57,3 +57,5 @@ Windows 可用 `scripts/build-windows-native.ps1`（MinGW Qt）；PR 的 Windows
 ## 许可证
 
 项目原创代码为 MIT。7-Zip 作为独立 DLL／动态库运行时加载，适用 LGPL 和其第三方许可；RAR 仅用于解压。Qt 与运行时许可随包提供，详见 `THIRD-PARTY-NOTICES.md` 和 `LICENSES/`。
+
+项目图标（`assets/milkzip-mascot.jpg` 及生成的 `assets/milkzip.ico`）由维护者提供，未单独声明开源许可。

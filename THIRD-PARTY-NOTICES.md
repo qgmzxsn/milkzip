@@ -1,6 +1,8 @@
 # Third-party components
 
-Original Local Archiver code and icon are MIT licensed; see `LICENSE`.
+Original MilkZip code is MIT licensed; see `LICENSE`. The application icon
+(`assets/milkzip-mascot.jpg` and the generated `assets/milkzip.ico`) is provided
+by the project maintainer and is not covered by an explicit open-source license.
 
 Windows builds use separate, replaceable shared libraries. MinGW
 packages and MSVC packages use different compiler runtimes; only

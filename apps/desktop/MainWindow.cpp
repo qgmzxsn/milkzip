@@ -362,7 +362,7 @@ void wipeList(QVector<QByteArray> &items) {
 }
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
-  setWindowTitle(QStringLiteral("本地归档"));
+  setWindowTitle(QStringLiteral("MilkZip"));
   resize(1040, 650);
   menuBar()->setNativeMenuBar(false);
   setStyleSheet(QStringLiteral(
@@ -403,8 +403,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
   auto *helpMenu = menuBar()->addMenu(QStringLiteral("帮助"));
   connect(helpMenu->addAction(QStringLiteral("关于")), &QAction::triggered, this, [this] {
     QMessageBox::about(
-        this, QStringLiteral("关于本地归档"),
-        QStringLiteral("本地归档 %1\n\n查看和解压本机压缩包。密码本只写在 Windows 凭据管理器里。\n"
+        this, QStringLiteral("关于 MilkZip"),
+        QStringLiteral("MilkZip %1\n\n查看和解压本机压缩包。密码本只写在 Windows 凭据管理器里。\n"
                        "不会创建 RAR，也不会运行解压出来的程序。")
             .arg(QLatin1String(ARCHIVER_VERSION)));
   });
@@ -611,7 +611,7 @@ void MainWindow::browseDirectory(const QString &path) {
   archivePrefix_.clear();
   directory_ = info.absoluteFilePath();
   pathBar_->setText(QDir::toNativeSeparators(directory_));
-  setWindowTitle(QStringLiteral("本地归档"));
+  setWindowTitle(QStringLiteral("MilkZip"));
   QVector<ArchiveRow> rows;
   if (!info.isRoot()) {
     ArchiveRow parent;
@@ -943,7 +943,7 @@ void MainWindow::openPath(QString path) {
   archivePath_ = QFileInfo(path).absoluteFilePath();
   directory_ = QFileInfo(path).absolutePath();
   pathBar_->setText(QDir::toNativeSeparators(archivePath_));
-  setWindowTitle(QFileInfo(path).fileName() + QStringLiteral(" — 本地归档"));
+  setWindowTitle(QFileInfo(path).fileName() + QStringLiteral(" — MilkZip"));
   startOpen(archivePath_);
 }
 
@@ -1247,7 +1247,7 @@ void MainWindow::cancelExtraction() {
 void MainWindow::showError(int result, const QString &detail) {
   const QString text = errorText(result, detail);
   status_->setText(text);
-  QMessageBox::warning(this, QStringLiteral("本地归档"), text);
+  QMessageBox::warning(this, QStringLiteral("MilkZip"), text);
 }
 
 void MainWindow::dragEnterEvent(QDragEnterEvent *event) {

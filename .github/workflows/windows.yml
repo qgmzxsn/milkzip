@@ -51,11 +51,11 @@ jobs:
         shell: pwsh
         run: |
           $qt = "$env:RUNNER_TEMP/Qt/6.8.3/msvc2022_64"
-          $stage = "$env:GITHUB_WORKSPACE/dist/LocalArchiver-0.5.0-windows-x64"
+          $stage = "$env:GITHUB_WORKSPACE/dist/milkzip-0.5.1-windows-x64"
           New-Item -ItemType Directory -Path $stage -Force | Out-Null
-          Copy-Item build/local-archiver.exe,build/archiver.dll $stage
+          Copy-Item build/milkzip.exe,build/archiver.dll $stage
           Copy-Item third_party/7zip/src/CPP/7zip/Bundles/Format7zF/x64/7z.dll $stage
-          & "$qt/bin/windeployqt.exe" --release --no-compiler-runtime --no-translations --no-opengl-sw --skip-plugin-types generic,networkinformation,tls "$stage/local-archiver.exe"
+          & "$qt/bin/windeployqt.exe" --release --no-compiler-runtime --no-translations --no-opengl-sw --skip-plugin-types generic,networkinformation,tls "$stage/milkzip.exe"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $crt = Get-ChildItem 'C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Redist/MSVC/*/x64/Microsoft.VC143.CRT' -Directory | Sort-Object FullName | Select-Object -Last 1
           if (!$crt) { throw 'MSVC runtime not found' }
@@ -72,17 +72,17 @@ jobs:
           & $python -c "import zipfile; z=zipfile.ZipFile(r'$smoke','w'); z.writestr('smoke.txt','offline'); z.close()"
           & "$stage/archiver-cli.exe" list $smoke
           if ($LASTEXITCODE -ne 0) { throw 'Staged engine smoke test failed' }
-          $process = Start-Process "$stage/local-archiver.exe" -PassThru
+          $process = Start-Process "$stage/milkzip.exe" -PassThru
           Start-Sleep -Seconds 3
           if ($process.HasExited) { throw "Staged GUI exited: $($process.ExitCode)" }
           Stop-Process -Id $process.Id
           Remove-Item "$stage/archiver-cli.exe",$smoke
-          Compress-Archive -Path $stage -DestinationPath dist/LocalArchiver-0.5.0-windows-x64-portable.zip
+          Compress-Archive -Path $stage -DestinationPath dist/milkzip-0.5.1-windows-x64-portable.zip
           (Get-FileHash dist/*.zip -Algorithm SHA256).Hash | Set-Content dist/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: LocalArchiver-0.5.0-Windows
+          name: milkzip-0.5.1-windows
           path: |
             dist/*.zip
             dist/SHA256SUMS.txt

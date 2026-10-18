@@ -31,7 +31,7 @@ cmake -S "$root" -B "$root/build-windows-qt" \
   -DQT_HOST_PATH="$qt_host" \
   -DCMAKE_PREFIX_PATH="$qt_win" \
   -DCMAKE_FIND_ROOT_PATH="/usr/x86_64-w64-mingw32;$qt_win"
-cmake --build "$root/build-windows-qt" -j"$(nproc)" --target local-archiver
+cmake --build "$root/build-windows-qt" -j"$(nproc)" --target milkzip
 
 qtbin="$qt_win/bin"
 stage="$root/build-windows-qt"
@@ -42,5 +42,5 @@ cp -f "$src/CPP/7zip/Bundles/Format7zF/b/mingw64/7z.dll" "$stage/7z.dll"
 mkdir -p "$stage/platforms"
 cp -f "$qt_win/plugins/platforms/qwindows.dll" "$stage/platforms/"
 
-echo "Windows Qt shell: $stage/local-archiver.exe"
+echo "Windows Qt shell: $stage/milkzip.exe"
 echo "It loads libarchiver.dll and 7z.dll from the same directory."

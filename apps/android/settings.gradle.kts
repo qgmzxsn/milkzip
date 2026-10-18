@@ -12,5 +12,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "local-archiver"
+rootProject.name = "milkzip"
 include(":app")

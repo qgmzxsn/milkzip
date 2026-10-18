@@ -14,6 +14,8 @@ namespace {
 #if defined(_WIN32)
 constexpr uint32_t kMagic = 0x3142504cu; // legacy LPB1
 constexpr uint32_t kMagic2 = 0x3242504cu;
+/* Keep the pre-rename credential target so passwords saved by older versions
+   survive the MilkZip rename. */
 #ifdef ARCHIVER_PASSWORD_BOOK_TEST
 const wchar_t *kTarget = L"local-archiver/tests/password-book";
 #else

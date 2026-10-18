@@ -15,19 +15,19 @@ if(WIN32)
 endif()
 target_include_directories(archiver_desktop PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 archiver_warnings(archiver_desktop)
-qt_add_executable(local-archiver main.cpp)
-set_target_properties(local-archiver PROPERTIES WIN32_EXECUTABLE TRUE)
-qt_add_resources(local-archiver app_icon PREFIX "/" BASE "${PROJECT_SOURCE_DIR}/assets"
-  FILES "${PROJECT_SOURCE_DIR}/assets/local-archiver.ico")
+qt_add_executable(milkzip main.cpp)
+set_target_properties(milkzip PROPERTIES WIN32_EXECUTABLE TRUE)
+qt_add_resources(milkzip app_icon PREFIX "/" BASE "${PROJECT_SOURCE_DIR}/assets"
+  FILES "${PROJECT_SOURCE_DIR}/assets/milkzip.ico")
 if(WIN32)
   enable_language(RC)
-  set(ARCHIVER_ICON_PATH "${PROJECT_SOURCE_DIR}/assets/local-archiver.ico")
+  set(ARCHIVER_ICON_PATH "${PROJECT_SOURCE_DIR}/assets/milkzip.ico")
   configure_file("${PROJECT_SOURCE_DIR}/assets/application.rc.in"
                  "${CMAKE_CURRENT_BINARY_DIR}/application.rc" @ONLY)
-  target_sources(local-archiver PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/application.rc")
+  target_sources(milkzip PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/application.rc")
 endif()
-target_link_libraries(local-archiver PRIVATE archiver_desktop)
-archiver_warnings(local-archiver)
+target_link_libraries(milkzip PRIVATE archiver_desktop)
+archiver_warnings(milkzip)
 if(NOT CMAKE_CROSSCOMPILING AND ARCHIVER_TEST_ENGINE AND ARCHIVER_TEST_7Z)
   find_package(Qt6 QUIET COMPONENTS Test)
   if(TARGET Qt6::Test)
@@ -57,11 +57,11 @@ if(NOT CMAKE_CROSSCOMPILING AND ARCHIVER_TEST_ENGINE AND ARCHIVER_TEST_7Z)
   endif()
 endif()
 if(UNIX AND NOT APPLE)
-  set_target_properties(local-archiver PROPERTIES
+  set_target_properties(milkzip PROPERTIES
     BUILD_RPATH "\$ORIGIN"
     INSTALL_RPATH "\$ORIGIN")
 elseif(APPLE)
-  set_target_properties(local-archiver PROPERTIES
+  set_target_properties(milkzip PROPERTIES
     BUILD_RPATH "@loader_path"
     INSTALL_RPATH "@loader_path")
 endif()

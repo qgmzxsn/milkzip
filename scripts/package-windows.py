@@ -39,11 +39,11 @@ def main():
     build, qt, compiler, engine, output = (x.resolve() for x in (
         args.build_dir, args.qt_dir, args.compiler_dir, args.sevenzip_dll, args.output_dir))
     output.mkdir(parents=True, exist_ok=True)
-    stage = output / f'LocalArchiver-{version}-windows-x64'
+    stage = output / f'milkzip-{version}-windows-x64'
     if stage.exists() and not args.packages_only:
         raise SystemExit(f'Refusing to reuse an existing release directory: {stage}')
     if args.packages_only:
-        for name in ('local-archiver.exe', 'libarchiver.dll'):
+        for name in ('milkzip.exe', 'libarchiver.dll'):
             if (stage / name).read_bytes() != (build / name).read_bytes():
                 raise SystemExit('Stage differs from the build; deploy a new release directory first')
     else:
@@ -51,7 +51,7 @@ def main():
 
     portable = output / (stage.name + '-portable.zip')
     zip_tree(stage, portable)
-    source = output / f'LocalArchiver-{version}-source.zip'
+    source = output / f'milkzip-{version}-source.zip'
     git = ['git', '-c', 'safe.directory=' + repo.as_posix()]
     names = subprocess.check_output([*git, 'ls-files', '--cached', '--others',
                                      '--exclude-standard', '-z'], cwd=repo).decode().split('\0')
@@ -60,7 +60,7 @@ def main():
             path = (repo / name).resolve()
             if not path.is_relative_to(repo) or not path.is_file():
                 raise SystemExit(f'Invalid source file: {name}')
-            archive.write(path, f'LocalArchiver-{version}-source/' + name)
+            archive.write(path, f'milkzip-{version}-source/' + name)
     assets = [portable, source]
     if args.makensis:
         metadata = build / 'release-meta'
@@ -75,19 +75,19 @@ def main():
         installer = output / (stage.name + '-setup.exe')
         run([args.makensis.resolve(), '-V2', '-WX', '-INPUTCHARSET', 'UTF8',
              '-DVERSION=' + version, '-DSTAGE=' + str(stage), '-DOUTPUT=' + str(installer),
-             '-DAPP_ICON=' + str(repo / 'assets/local-archiver.ico'),
+             '-DAPP_ICON=' + str(repo / 'assets/milkzip.ico'),
              '-DUNINSTALL_LIST=' + str(file_list), repo / 'packaging/windows/installer.nsi'])
         assets.append(installer)
     checksums = ''.join(hashlib.sha256(p.read_bytes()).hexdigest() + '  ' + p.name + '\n'
                         for p in assets)
-    (output / f'LocalArchiver-{version}-SHA256SUMS.txt').write_text(checksums, encoding='ascii')
+    (output / f'milkzip-{version}-SHA256SUMS.txt').write_text(checksums, encoding='ascii')
     for asset in assets:
         print(f'{asset.name}: {asset.stat().st_size / 1024 / 1024:.2f} MiB')
 
 
 def deploy(repo, build, qt, compiler, engine, stage):
     stage.mkdir()
-    for name in ('local-archiver.exe', 'libarchiver.dll'):
+    for name in ('milkzip.exe', 'libarchiver.dll'):
         shutil.copy2(build / name, stage / name)
     shutil.copy2(engine, stage / '7z.dll')
     env = {**os.environ, 'PATH': str(compiler / 'bin') + os.pathsep +
@@ -95,7 +95,7 @@ def deploy(repo, build, qt, compiler, engine, stage):
     run([qt / 'bin/windeployqt.exe', '--release', '--no-compiler-runtime',
          '--no-opengl-sw', '--no-system-d3d-compiler', '--no-system-dxc-compiler',
          '--skip-plugin-types', 'generic,networkinformation,tls',
-         '--translations', 'zh_CN', stage / 'local-archiver.exe'], env=env)
+         '--translations', 'zh_CN', stage / 'milkzip.exe'], env=env)
     for name in ('libgcc_s_seh-1.dll', 'libstdc++-6.dll', 'libwinpthread-1.dll'):
         shutil.copy2(compiler / 'bin' / name, stage / name)
     (stage / 'qt.conf').write_text('[Paths]\nPrefix=.\nPlugins=.\nTranslations=translations\n', encoding='utf-8')

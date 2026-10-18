@@ -2,7 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- No INTERNET permission. This app only opens files on this device. -->
     <application
-        android:label="本地归档"
+        android:label="MilkZip"
         android:allowBackup="false">
         <activity
             android:name=".MainActivity"

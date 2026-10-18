@@ -41,7 +41,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed.' }
     & $CMake --build $BuildDir -j 6
     if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
-    if (!(Test-Path -LiteralPath (Join-Path $BuildDir 'local-archiver.exe'))) {
+    if (!(Test-Path -LiteralPath (Join-Path $BuildDir 'milkzip.exe'))) {
         throw 'GUI not built. Check that Qt Widgets and Concurrent are installed.'
     }
     Copy-Item -LiteralPath $engine -Destination (Join-Path $BuildDir '7z.dll')
@@ -50,14 +50,14 @@ try {
     }
     & (Join-Path $qt 'bin\windeployqt.exe') --release --no-compiler-runtime --no-opengl-sw `
         --no-system-d3d-compiler --no-system-dxc-compiler --translations zh_CN `
-        --skip-plugin-types 'generic,networkinformation,tls' (Join-Path $BuildDir 'local-archiver.exe')
+        --skip-plugin-types 'generic,networkinformation,tls' (Join-Path $BuildDir 'milkzip.exe')
     if ($LASTEXITCODE -ne 0) { throw 'Qt deployment failed.' }
     if (!$NoTests) {
         $ctest = Join-Path (Split-Path -Parent (Get-Command $CMake).Source) 'ctest.exe'
         & $ctest --test-dir $BuildDir --output-on-failure
         if ($LASTEXITCODE -ne 0) { throw 'Tests failed.' }
     }
-    Write-Output (Join-Path $BuildDir 'local-archiver.exe')
+    Write-Output (Join-Path $BuildDir 'milkzip.exe')
 } finally {
     $env:PATH = $oldPath
 }

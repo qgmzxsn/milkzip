@@ -14,9 +14,9 @@ int main(int argc, char **argv) {
     QApplication::setStyle(vista);
   else if (QStyle *windows = QStyleFactory::create(QStringLiteral("Windows")))
     QApplication::setStyle(windows);
-  QApplication::setApplicationName(QStringLiteral("local-archiver"));
+  QApplication::setApplicationName(QStringLiteral("milkzip"));
   QApplication::setApplicationVersion(QStringLiteral(ARCHIVER_VERSION));
-  QApplication::setWindowIcon(QIcon(QStringLiteral(":/local-archiver.ico")));
+  QApplication::setWindowIcon(QIcon(QStringLiteral(":/milkzip.ico")));
   QTranslator translator;
   const QString translationDir = QDir(QApplication::applicationDirPath()).filePath("translations");
   if (translator.load(QStringLiteral("qt_zh_CN"), translationDir) ||

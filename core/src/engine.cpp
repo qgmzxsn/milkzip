@@ -1201,7 +1201,7 @@ bool make_temp_dir(std::string &out) {
   DWORD n = ::GetTempPathW(MAX_PATH, base);
   if (n == 0 || n >= MAX_PATH) return false;
   for (unsigned i = 0; i < 1000; ++i) {
-    std::wstring dir = std::wstring(base) + L"local-archiver-" +
+    std::wstring dir = std::wstring(base) + L"milkzip-" +
                        std::to_wstring(::GetCurrentProcessId()) + L"-" + std::to_wstring(i);
     if (::CreateDirectoryW(dir.c_str(), nullptr)) {
       out = wide_to_utf8(dir.c_str(), dir.size());
@@ -1214,7 +1214,7 @@ bool make_temp_dir(std::string &out) {
   const char *base = getenv("TMPDIR");
   std::string dir = (base && base[0]) ? base : "/tmp";
   if (dir.back() != '/') dir.push_back('/');
-  dir += "local-archiver-XXXXXX";
+  dir += "milkzip-XXXXXX";
   std::vector<char> buf(dir.begin(), dir.end());
   buf.push_back('\0');
   if (!mkdtemp(buf.data())) return false;
