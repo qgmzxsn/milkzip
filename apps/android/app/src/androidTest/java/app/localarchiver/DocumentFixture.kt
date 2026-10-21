@@ -7,16 +7,6 @@ import android.os.Bundle
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.FileInputStream
 
-/** Runs as the provider's test-only package, issuing a real URI grant to the app. */
-class TestGrantActivity : Activity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        grantUriPermission("app.localarchiver", Uri.parse("content://app.localarchiver.test.documents/"),
-            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
-        finish()
-    }
-}
-
 object DocumentFixture {
     fun grant() {
         val inst = InstrumentationRegistry.getInstrumentation()
