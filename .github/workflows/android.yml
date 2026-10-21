@@ -5,7 +5,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: android-${{ github.ref }}
+  group: android-device-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   android:
@@ -42,6 +42,8 @@ jobs:
           path: build-android/jni-package
           key: android-native-r27c-${{ hashFiles('scripts/build-android.sh', 'scripts/fetch-7zip.sh', 'CMakeLists.txt', 'core/**', 'apps/android/app/src/main/cpp/**', 'third_party/lz4/**') }}
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
       - name: Unit tests, lint and APK
         working-directory: apps/android
         run: ./gradlew testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest --stacktrace

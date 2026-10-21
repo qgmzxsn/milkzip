@@ -107,6 +107,17 @@ class ArchiveIntegrationTest {
         assertTrue(File(dir, "documents/keep.docx").isFile)
         assertFalse(File(dir, "documents").walkTopDown().any { it.name == "document.xml" })
     }
+    @Test fun sharedFileProviderWithOnlyOpenableColumnsCanBeStaged() {
+        val shared = File(context.cacheDir, "share/分享测试.txt").apply { parentFile!!.mkdirs() }
+        instrumentation.context.assets.open("fixtures/inner.zip").use { input -> shared.outputStream().use { input.copyTo(it) } }
+        try {
+            val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.files", shared)
+            val node = storage.fromUri(uri)
+            assertEquals("分享测试.txt", node.name); assertEquals(shared.length(), node.size)
+            val staged = storage.stage(node, listOf(node), dir, { false }) { _, _, _ -> }
+            assertEquals(0, JSONObject(ArchiverNative.nativeList(staged.path, engine, emptyArray(), "", Listener())).getInt("code"))
+        } finally { shared.delete() }
+    }
     @Test fun passwordBookEncryptedPersistenceAndOrder() {
         val book = PasswordBook(context); val old = book.read()
         try {

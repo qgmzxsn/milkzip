@@ -176,7 +176,7 @@ class MainActivity : Activity() {
         val crumbs = row().apply { setPadding(dp(16), dp(4), dp(16), dp(6)) }
         crumbs.addView(button("‹") { goUp() }, LinearLayout.LayoutParams(dp(48), dp(48)))
         val path = if (archive != null) archive!!.source.name + if (archive!!.prefix.isEmpty()) "" else " / ${archive!!.prefix.trimEnd('/')}" else folder?.let { if (it.isDocument) "已授权 / ${it.name}" else it.location.removePrefix(storage.shared.path).ifEmpty { "内部存储" } } ?: "文件"
-        crumbs.addView(text(path, 13f, muted).apply { maxLines = 2; setPadding(dp(8), 0, 0, 0); setOnClickListener { if (archive != null) closeArchive() else folderInfo() } }, LinearLayout.LayoutParams(0, -2, 1f))
+        crumbs.addView(text(path, 13f, muted).apply { maxLines = 2; setPadding(dp(8), 0, 0, 0); setOnClickListener { if (archive != null) archiveInfo(archive!!) else folderInfo() } }, LinearLayout.LayoutParams(0, -2, 1f))
         layout.addView(crumbs)
         val tools = row().apply { setPadding(dp(16), 0, dp(16), dp(8)) }
         val search = EditText(this).apply { hint = "搜索当前目录"; textSize = 14f; setSingleLine(); setTextColor(ink); setHintTextColor(muted); background = rounded(surface, 12); setPadding(dp(14), dp(10), dp(14), dp(10)); setText(query) }
@@ -189,9 +189,10 @@ class MainActivity : Activity() {
         val list = ListView(this).apply { divider = null; setPadding(dp(12), 0, dp(12), dp(8)); clipToPadding = false; scrollBarStyle = View.SCROLLBARS_OUTSIDE_OVERLAY }
         val empty = text(if (loading) "读取中…" else "这个目录是空的", 14f, muted).apply { gravity = Gravity.CENTER; setPadding(dp(24), dp(24), dp(24), dp(24)) }
         panel.addView(list); panel.addView(empty, FrameLayout.LayoutParams(-1, -1)); list.emptyView = empty
+        val adapter = FileAdapter(emptyList()); list.adapter = adapter
         fun refreshRows() {
             visible = Rules.sorted(files.filter { it.name.contains(query, true) }, sort)
-            list.adapter = FileAdapter(visible)
+            adapter.update(visible)
             selectionBar.removeAllViews(); selectionBar.visibility = if (selected.isEmpty()) View.GONE else View.VISIBLE
             if (selected.isNotEmpty()) {
                 selectionBar.addView(text("已选 ${selected.size} 项", 13f, muted), LinearLayout.LayoutParams(0, -2, 1f))
@@ -216,16 +217,16 @@ class MainActivity : Activity() {
         }
         list.setOnItemLongClickListener { _, _, position, _ ->
             val node = visible[position]
-            if (archive == null) fileMenu(node) else AlertDialog.Builder(this).setTitle(node.name).setMessage("路径：${node.location}\n大小：${Rules.size(node.size)}").setPositiveButton("关闭", null).show()
+            if (archive == null) fileMenu(node) { selected.add(node.location); refreshRows() } else AlertDialog.Builder(this).setTitle(node.name).setMessage("路径：${node.location}\n大小：${Rules.size(node.size)}").setPositiveButton("关闭", null).show()
             true
         }
         if (archive != null) {
             val page = archive!!
             files = page.rows
             val actions = row().apply { setPadding(dp(16), dp(8), dp(10), dp(10)) }
-            actions.add(button("解压", true) { extractDialog(page.source, emptyList()) }, 1f)
+            actions.add(button("一键解压", true) { quickExtract(page.source, emptyList()) }, 1.6f)
+            actions.add(button("选项") { extractDialog(page.source, emptyList()) }, 1f)
             actions.add(button("检查") { submit(Job("test", listOf(page.source), staged = page.staged), showTasks = true) }, 1f)
-            actions.add(button("详情") { archiveInfo(page) }, 1f)
             layout.addView(actions)
             if (page.truncated) layout.addView(text("此目录仅显示前 50,000 项，解压不受此限制。", 12f, muted).apply { setPadding(dp(16), 0, dp(16), dp(8)) })
             refreshRows()
@@ -241,7 +242,8 @@ class MainActivity : Activity() {
             }
         }
     }
-    private inner class FileAdapter(private val rows: List<Node>) : BaseAdapter() {
+    private inner class FileAdapter(private var rows: List<Node>) : BaseAdapter() {
+        fun update(value: List<Node>) { rows = value; notifyDataSetChanged() }
         override fun getCount() = rows.size
         override fun getItem(position: Int) = rows[position]
         override fun getItemId(position: Int) = position.toLong()
@@ -285,17 +287,18 @@ class MainActivity : Activity() {
         val labels = arrayOf("名称", "大小（大到小）", "修改时间（新到旧）")
         AlertDialog.Builder(this).setTitle("排序方式").setItems(labels) { _, i -> sort = arrayOf("name", "size", "date")[i]; prefs.edit().putString("sort", sort).apply(); render() }.show()
     }
-    private fun fileMenu(node: Node) {
-        AlertDialog.Builder(this).setTitle(node.name).setItems(arrayOf("打开压缩包", "解压", "检查完整性", "选择 / 多选打包", "文件信息", "分享文件", "用其他应用打开")) { _, i -> when (i) {
-            0 -> listArchive(node, files); 1 -> if (node.directory) notify("请选择压缩包文件") else extractDialog(node, files)
-            2 -> if (node.directory) notify("请选择压缩包文件") else submit(Job("test", listOf(node), files), true)
-            3 -> { selected.add(node.location); render() }; 4 -> nodeInfo(node); 5 -> if (node.directory) notify("文件夹可以先打包为 ZIP") else share(node); 6 -> if (!node.directory) openWith(node)
+    private fun fileMenu(node: Node, select: () -> Unit) {
+        AlertDialog.Builder(this).setTitle(node.name).setItems(arrayOf("打开压缩包", "一键解压", "解压选项…", "检查完整性", "选择 / 多选打包", "文件信息", "分享文件", "用其他应用打开")) { _, i -> when (i) {
+            0 -> listArchive(node, files); 1 -> if (node.directory) notify("请选择压缩包文件") else quickExtract(node, files)
+            2 -> if (node.directory) notify("请选择压缩包文件") else extractDialog(node, files)
+            3 -> if (node.directory) notify("请选择压缩包文件") else submit(Job("test", listOf(node), files), true)
+            4 -> select(); 5 -> nodeInfo(node); 6 -> if (node.directory) notify("文件夹可以先打包为 ZIP") else share(node); 7 -> if (!node.directory) openWith(node)
         } }.show()
     }
     private fun mainMenu() {
-        AlertDialog.Builder(this).setTitle("MilkZip").setItems(arrayOf("选择文件 / 分卷", "授权文件夹", "打包所选文件", "设置", "关于 MilkZip", "刷新")) { _, i -> when (i) {
+        AlertDialog.Builder(this).setTitle("MilkZip").setItems(arrayOf("选择文件 / 分卷", "授权文件夹", "打包所选文件", "设置", "关于 MilkZip", "刷新", if (archive != null) "压缩包详情" else "当前文件夹信息")) { _, i -> when (i) {
             0 -> pickFiles(); 1 -> pickTree(102); 2 -> if (selected.isEmpty()) { notify("长按文件后选择“多选打包”，也可通过系统选择器选文件"); pickFiles() } else createZip(files.filter { it.location in selected })
-            3 -> settings(); 4 -> about(); 5 -> render()
+            3 -> settings(); 4 -> about(); 5 -> render(); 6 -> archive?.let { archiveInfo(it) } ?: folderInfo()
         } }.show()
     }
     private fun storageAccess() {
@@ -399,6 +402,15 @@ class MainActivity : Activity() {
             }
             if (showTasks) { tab = 1; render() }
         } catch (error: Exception) { failure(error) }
+    }
+    private fun quickExtract(source: Node, siblings: List<Node>) {
+        val tree = prefs.getString("output-tree", null)
+        val cached = archive?.takeIf { it.source.location == source.location }?.staged
+        val options = ExtractSettings(recursive = true, ask = false, keep = prefs.getBoolean("keep", true), depth = 32, maxBytes = prefs.getLong("limit", 64L shl 30))
+        submit(Job("extract", listOf(source), if (siblings.isNotEmpty()) siblings else externalSources,
+            staged = cached, settings = options,
+            parent = if (tree == null && !source.isDocument && source.file.parentFile?.canWrite() == true) source.file.parentFile else null,
+            name = Rules.resultName(source.name), exportTree = tree), true)
     }
     private fun extractDialog(source: Node, siblings: List<Node>, initial: ExtractSettings? = null, initialName: String = "") {
         if (Tasks.state != null) { notify("请先等待或取消当前任务"); return }

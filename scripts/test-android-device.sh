@@ -1,11 +1,20 @@
 #!/bin/sh
-# Called while the emulator is alive; retain reports even when a test fails.
+# Run on the Linux CI emulator. Retain diagnostics before Gradle/emulator cleanup.
 set -u
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+artifacts="$root/android-artifacts"
+mkdir -p "$artifacts"
+timeout 15 adb logcat -c || true
+adb logcat -v threadtime TestRunner:I AndroidRuntime:E '*:S' > "$artifacts/test-events.txt" &
+logger=$!
+trap 'kill "$logger" 2>/dev/null || true' EXIT
 cd "$root/apps/android" || exit 1
-./gradlew connectedDebugAndroidTest --stacktrace
+timeout --kill-after=15s 300 ./gradlew connectedDebugAndroidTest --stacktrace
 result=$?
-mkdir -p "$root/android-artifacts"
-adb pull /sdcard/Download/MilkZipScreenshots "$root/android-artifacts/" || true
-adb logcat -d > "$root/android-artifacts/logcat.txt" || true
+timeout 15 adb pull /sdcard/Download/MilkZipScreenshots "$artifacts/" || true
+timeout 15 adb logcat -d > "$artifacts/logcat.txt" || true
+if [ "$result" != 0 ]; then
+  timeout 15 adb shell dumpsys window > "$artifacts/window.txt" || true
+  timeout 15 adb exec-out screencap -p > "$artifacts/failure.png" || true
+fi
 exit "$result"

@@ -80,8 +80,15 @@ class UiWorkflowTest {
             scenario.onActivity { assertTrue(Tasks.submit(Job("list", listOf(storage.fromFile(archive))))) }
             waitFor { Tasks.state == null && Tasks.page?.source?.location == archive.path }
             screenshot("02-archive")
-            onView(withText("解压")).perform(click()); screenshot("03-extract-options")
+            onView(withText("选项")).perform(click()); screenshot("03-extract-options")
             onView(withText("取消")).perform(click())
+            // Exercise the actual one-tap default with notifications already declined.
+            scenario.onActivity { it.getSharedPreferences("mobile-settings", Context.MODE_PRIVATE).edit().putBoolean("notification-asked", true).apply() }
+            val beforeQuick = Tasks.records.firstOrNull()?.id
+            onView(withText("一键解压")).perform(click())
+            waitFor { Tasks.state == null && Tasks.records.firstOrNull()?.id != beforeQuick }
+            assertEquals(Tasks.records.first().detail, 0, Tasks.records.first().code)
+            assertTrue(File(Tasks.records.first().output!!).walkTopDown().any { it.name == "你好.txt" })
             val encrypted = File(storage.results, "加密测试.7z")
             inst.context.assets.open("fixtures/secret.7z").use { input -> encrypted.outputStream().use { input.copyTo(it) } }
             scenario.onActivity { assertTrue(Tasks.submit(Job("extract", listOf(storage.fromFile(encrypted))))) }

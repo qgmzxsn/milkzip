@@ -22,15 +22,22 @@ class Storage(private val context: Context) {
         if (uri.scheme == "file") return fromFile(File(requireNotNull(uri.path)))
         val columns = arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE,
             DocumentsContract.Document.COLUMN_SIZE, DocumentsContract.Document.COLUMN_LAST_MODIFIED)
-        try {
-            context.contentResolver.query(uri, columns, null, null, null)?.use { c ->
-                if (c.moveToFirst()) return Node(uri.toString(), c.getString(0) ?: "archive", c.getString(1) == DocumentsContract.Document.MIME_TYPE_DIR,
-                    if (c.isNull(2)) -1 else c.getLong(2), if (c.isNull(3)) 0 else c.getLong(3), tree)
-            }
-        } catch (_: IllegalArgumentException) { /* Some shared-file providers only support OpenableColumns. */ }
-        context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { c ->
-            if (c.moveToFirst()) return Node(uri.toString(), c.getString(0) ?: "archive", false, if (c.isNull(1)) -1 else c.getLong(1), tree = tree)
+        fun metadata(projection: Array<String>): Node? = context.contentResolver.query(uri, projection, null, null, null)?.use { c ->
+            if (!c.moveToFirst()) return@use null
+            val name = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            val size = c.getColumnIndex(OpenableColumns.SIZE)
+            val mime = c.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE)
+            val modified = c.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+            if (name < 0) return@use null
+            Node(uri.toString(), c.getString(name) ?: "archive",
+                mime >= 0 && c.getString(mime) == DocumentsContract.Document.MIME_TYPE_DIR,
+                if (size < 0 || c.isNull(size)) -1 else c.getLong(size),
+                if (modified < 0 || c.isNull(modified)) 0 else c.getLong(modified), tree)
         }
+        try { metadata(columns)?.let { return it } }
+        catch (_: IllegalArgumentException) { /* Shared-file providers may reject extra columns. */ }
+        catch (_: UnsupportedOperationException) { }
+        metadata(arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE))?.let { return it }
         throw IOException("无法读取文件信息，请重新授权")
     }
     fun treeRoot(uri: Uri) = fromUri(DocumentsContract.buildDocumentUriUsingTree(uri, DocumentsContract.getTreeDocumentId(uri)), uri.toString())

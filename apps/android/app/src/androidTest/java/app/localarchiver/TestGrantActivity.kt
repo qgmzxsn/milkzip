@@ -20,7 +20,7 @@ class TestGrantActivity : Activity() {
 object DocumentFixture {
     fun grant() {
         val inst = InstrumentationRegistry.getInstrumentation()
-        android.os.ParcelFileDescriptor.AutoCloseInputStream(inst.uiAutomation.executeShellCommand("am start -W -n app.localarchiver.test/app.localarchiver.TestGrantActivity")).use { it.readBytes() }
+        android.os.ParcelFileDescriptor.AutoCloseInputStream(inst.uiAutomation.executeShellCommand("am start -n app.localarchiver.test/app.localarchiver.TestGrantActivity")).use { it.readBytes() }
         val storage = Storage(inst.targetContext)
         val end = System.currentTimeMillis() + 10000
         while (true) {
