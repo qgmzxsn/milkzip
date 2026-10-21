@@ -83,6 +83,11 @@ class UiWorkflowTest {
         File(storage.results, "照片与文档").mkdirs()
         File(storage.results, "使用说明.txt").writeText("MilkZip Android")
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            waitFor {
+                var focused = false
+                runCatching { scenario.onActivity { focused = it.window.decorView.hasWindowFocus() } }
+                focused
+            }
             onView(withText("结果")).perform(click())
             screenshot("01-files")
             scenario.onActivity { assertTrue(Tasks.submit(Job("list", listOf(storage.fromFile(archive))))) }
