@@ -1,5 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application>
+        <activity android:name="app.localarchiver.TestGrantActivity" android:exported="true" android:theme="@android:style/Theme.NoDisplay"/>
         <provider android:name="app.localarchiver.TestDocumentsProvider" android:authorities="app.localarchiver.test.documents" android:exported="true" android:grantUriPermissions="true" android:permission="android.permission.MANAGE_DOCUMENTS"/>
     </application>
 </manifest>

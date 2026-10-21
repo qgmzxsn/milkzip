@@ -6,6 +6,6 @@ cd "$root/apps/android" || exit 1
 ./gradlew connectedDebugAndroidTest --stacktrace
 result=$?
 mkdir -p "$root/android-artifacts"
-adb pull /sdcard/Android/data/app.localarchiver/files/screenshots "$root/android-artifacts/" || true
+adb pull /sdcard/Download/MilkZipScreenshots "$root/android-artifacts/" || true
 adb logcat -d > "$root/android-artifacts/logcat.txt" || true
 exit "$result"

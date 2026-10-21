@@ -18,6 +18,15 @@ class RulesTest {
         assertFalse(Rules.validPassword("中".repeat(342)))
         assertFalse(Rules.validPassword("")); assertFalse(Rules.validPassword("a\u0000b"))
     }
+    @Test fun longChineseAndEmojiOutputNamesFitFilesystem() {
+        for (name in listOf("中".repeat(80) + ".zip", "😀".repeat(80) + ".7z")) {
+            val result = Rules.resultName(name)
+            assertTrue(result.endsWith("_解压"))
+            assertTrue(result.toByteArray(Charsets.UTF_8).size <= 240)
+            assertFalse(result.contains('\uFFFD'))
+            assertEquals(result, result.toByteArray(Charsets.UTF_8).toString(Charsets.UTF_8))
+        }
+    }
     @Test fun noPathTraversalInUserOutputNames() {
         listOf("..", ".", "a/b", "a\\b", "bad\u0000name", "\n").forEach { value -> assertThrows(IllegalArgumentException::class.java) { Rules.safeName(value) } }
         assertEquals("你好.zip", Rules.safeName("你好.zip"))

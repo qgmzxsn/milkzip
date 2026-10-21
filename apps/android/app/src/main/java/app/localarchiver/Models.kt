@@ -20,6 +20,18 @@ object Rules {
         require(value.toByteArray(Charsets.UTF_8).size <= 240) { "文件名过长" }
         return value
     }
+    fun resultName(source: String, suffix: String = "_解压"): String {
+        val budget = 240 - suffix.toByteArray(Charsets.UTF_8).size
+        val result = StringBuilder(); var used = 0; var offset = 0
+        while (offset < source.length) {
+            val point = source.codePointAt(offset)
+            val piece = String(Character.toChars(point))
+            val bytes = piece.toByteArray(Charsets.UTF_8).size
+            if (used + bytes > budget) break
+            result.append(piece); used += bytes; offset += Character.charCount(point)
+        }
+        return result.toString() + suffix
+    }
     fun volumeGroup(name: String): String? {
         val lower = name.lowercase(Locale.ROOT)
         Regex("^(.*)\\.part[0-9]+\\.rar$").matchEntire(lower)?.let { return "rar:${it.groupValues[1]}" }

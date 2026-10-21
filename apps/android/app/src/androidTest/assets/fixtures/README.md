@@ -12,3 +12,6 @@ These fixtures are instrumentation test data, excluded from the application APK.
   from https://github.com/libarchive/libarchive/tree/master/libarchive/test.
   It exercises the bundled 7-Zip RAR5 reader; libarchive itself is not linked or
   packaged. Its attribution and license are in `libarchive-COPYING.txt`.
+
+GZip fixture assets carry an extra `.fixture` suffix because AAPT otherwise
+inflates `.gz` assets during APK packaging. Tests restore the original names.

@@ -404,7 +404,7 @@ class MainActivity : Activity() {
         if (Tasks.state != null) { notify("请先等待或取消当前任务"); return }
         val options = initial ?: ExtractSettings(prefs.getBoolean("recursive", true), prefs.getBoolean("ask", false), prefs.getBoolean("keep", true), prefs.getInt("depth", 32), prefs.getLong("limit", 64L shl 30))
         val form = padded(column(), 20)
-        val name = EditText(this).apply { hint = "结果文件夹名称"; setSingleLine(); setText(initialName.ifEmpty { source.name.take(180) + "_解压" }); textSize = 15f }
+        val name = EditText(this).apply { hint = "结果文件夹名称"; setSingleLine(); setText(initialName.ifEmpty { Rules.resultName(source.name) }); textSize = 15f }
         form.add(text("结果文件夹", 12f, muted)); form.add(name)
         val recursive = CheckBox(this).apply { text = "自动解开内层压缩包"; isChecked = options.recursive }
         val ask = CheckBox(this).apply { text = "每一层由我选择继续解压的文件"; isChecked = options.ask }

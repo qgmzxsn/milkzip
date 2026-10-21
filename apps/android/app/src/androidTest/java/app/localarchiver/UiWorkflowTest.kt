@@ -31,6 +31,42 @@ class UiWorkflowTest {
         val bitmap = requireNotNull(inst.uiAutomation.takeScreenshot()) { "Emulator screenshot unavailable" }
         File(folder, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         bitmap.recycle()
+        // Gradle uninstalls the tested app afterwards; retain screenshots in shared Downloads.
+        android.os.ParcelFileDescriptor.AutoCloseInputStream(inst.uiAutomation.executeShellCommand("mkdir -p /sdcard/Download/MilkZipScreenshots && cp '${File(folder, "$name.png").path}' /sdcard/Download/MilkZipScreenshots/$name.png")).use { it.readBytes() }
+    }
+    @org.junit.After fun finishPendingTask() {
+        if (Tasks.state != null) { Tasks.cancel(); waitFor { Tasks.state == null } }
+    }
+    @Test fun cachedDocumentsSurviveFolderBrowsingAndAreReplacedSafely() {
+        DocumentFixture.grant()
+        val storage = Storage(context)
+        val tree = android.net.Uri.parse("content://app.localarchiver.test.documents/tree/root")
+        val root = storage.treeRoot(tree)
+        val folder = android.provider.DocumentsContract.createDocument(context.contentResolver, android.net.Uri.parse(root.location), android.provider.DocumentsContract.Document.MIME_TYPE_DIR, "cache-test-${System.nanoTime()}")!!
+        fun document(name: String): Node {
+            val uri = android.provider.DocumentsContract.createDocument(context.contentResolver, folder, "application/zip", name)!!
+            inst.context.assets.open("fixtures/inner.zip").use { input -> context.contentResolver.openOutputStream(uri)!!.use { input.copyTo(it) } }
+            return storage.fromUri(uri, tree.toString())
+        }
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                val first = document("first.zip")
+                scenario.onActivity { assertTrue(Tasks.submit(Job("list", listOf(first)))) }
+                waitFor { Tasks.state == null && Tasks.page?.source?.location == first.location }
+                val cached = Tasks.page!!.staged
+                assertTrue(cached.exists())
+                val version = Tasks.pageVersion
+                scenario.onActivity { assertTrue(Tasks.submit(Job("list", listOf(first), prefix = "中文目录/", staged = cached))) }
+                waitFor { Tasks.state == null && Tasks.pageVersion > version }
+                assertTrue(cached.exists()); assertEquals(cached, Tasks.page!!.staged)
+                val next = document("second.zip")
+                scenario.onActivity { assertTrue(Tasks.submit(Job("list", listOf(next)))) }
+                waitFor { Tasks.state == null && Tasks.page?.source?.location == next.location }
+                assertFalse(cached.exists()); assertTrue(Tasks.page!!.staged.exists())
+            }
+        } finally {
+            android.provider.DocumentsContract.deleteDocument(context.contentResolver, folder)
+        }
     }
     @Test fun browseExtractRotatePasswordPromptAndShowReports() {
         val storage = Storage(context)
@@ -51,9 +87,9 @@ class UiWorkflowTest {
             scenario.onActivity { assertTrue(Tasks.submit(Job("extract", listOf(storage.fromFile(encrypted))))) }
             waitFor { Tasks.prompt != null }
             scenario.recreate()
-            waitFor { Tasks.prompt != null }
-            onView(withHint("密码（保留首尾空格）")).perform(replaceText("安卓 密码"), closeSoftKeyboard())
-            onView(withText("继续")).perform(click())
+            waitFor { inst.uiAutomation.rootInActiveWindow?.findAccessibilityNodeInfosByText("需要解压密码")?.isNotEmpty() == true }
+            onView(withHint("密码（保留首尾空格）")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(replaceText("安卓 密码"), closeSoftKeyboard())
+            onView(withText("继续")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(click())
             waitFor { Tasks.state == null }
             assertEquals(Tasks.records.first().detail, 0, Tasks.records.first().code)
             onView(withTagValue(equalTo("nav1"))).perform(click())

@@ -14,9 +14,8 @@ import java.io.File
 @RunWith(AndroidJUnit4::class)
 class DocumentStorageTest {
     @Test fun stageSplitDocumentsAndExportWithoutOverwrite() {
-        if (Build.VERSION.SDK_INT < 29) { assumeTrue("Shell permission adoption requires API 29", false); return }
         val inst = InstrumentationRegistry.getInstrumentation()
-        inst.uiAutomation.adoptShellPermissionIdentity("android.permission.MANAGE_DOCUMENTS")
+        DocumentFixture.grant()
         val context = inst.targetContext; val storage = Storage(context)
         val tree = Uri.parse("content://app.localarchiver.test.documents/tree/root")
         val root = storage.treeRoot(tree)
@@ -40,7 +39,7 @@ class DocumentStorageTest {
             assertTrue(storage.children(parent).any { it.name == "解压结果 (1)" })
         } finally {
             DocumentsContract.deleteDocument(context.contentResolver, folder)
-            scratch.deleteRecursively(); inst.uiAutomation.dropShellPermissionIdentity()
+            scratch.deleteRecursively()
         }
     }
 }

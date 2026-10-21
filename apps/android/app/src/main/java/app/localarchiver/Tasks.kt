@@ -58,14 +58,15 @@ object Tasks {
                 a.getJSONObject(it).let { o -> TaskRecord(o.getString("id"), o.getString("title"), o.getLong("time"), o.getInt("code"), o.optString("detail"), o.optString("output").ifEmpty { null }) }
             } }
         }.getOrDefault(emptyList())
-        // No password/request is restored after a process death. Keep completed and partial results.
-        File(context.cacheDir, "jobs").listFiles()?.filter { System.currentTimeMillis() - it.lastModified() > TimeUnit.DAYS.toMillis(1) }?.forEach { it.deleteRecursively() }
+        // Cached inputs have no live owner after a process restart; results are outside cache.
+        File(context.cacheDir, "jobs").listFiles()?.forEach { it.deleteRecursively() }
+        File(context.cacheDir, "share").listFiles()?.filter { System.currentTimeMillis() - it.lastModified() > TimeUnit.DAYS.toMillis(1) }?.forEach { it.delete() }
     }
     private fun publish() { main.post { listeners.toList().forEach { it() } } }
     internal fun submit(job: Job): Boolean {
         init(context)
         if (active != null) return false
-        active = job; cancelled.set(false); if (job.kind == "list") page = null; warnings.clear()
+        active = job; cancelled.set(false); warnings.clear()
         state = TaskState(title(job), "准备中"); publish()
         try { ContextCompat.startForegroundService(context, Intent(context, TaskService::class.java)) }
         catch (error: Exception) { active = null; state = null; publish(); throw error }
@@ -155,7 +156,7 @@ object Tasks {
                             "test" -> ArchiverNative.nativeTest(file.absolutePath, engine, passwords(), callbacks)
                             else -> {
                                 val parent = job.parent ?: storage.results
-                                val preferred = job.name.ifEmpty { source.name.take(180) + "_解压" }
+                                val preferred = job.name.ifEmpty { Rules.resultName(source.name) }
                                 output = storage.uniqueDirectory(parent, preferred)
                                 val remaining = (output!!.usableSpace - (32L shl 20)).coerceAtLeast(0)
                                 require(remaining > 0) { "存储空间不足" }
@@ -167,10 +168,15 @@ object Tasks {
                         val json = JSONObject(response); code = json.getInt("code"); detail = json.optString("detail")
                         if (code == 0 && job.kind == "list") {
                             val rows = json.getJSONArray("entries")
+                            val previousInput = page?.staged
                             page = ArchivePage(source, file, job.prefix, (0 until rows.length()).map { i -> rows.getJSONObject(i).let {
                                 val path = it.getString("path")
                                 Node(path, path.substringAfterLast('/'), it.getBoolean("directory"), it.getLong("size"), it.optLong("modified", -1) * 1000)
                             } }, json.getLong("count"), json.getLong("size"), json.getLong("packed"), json.optBoolean("truncated"))
+                            if (previousInput != null && previousInput != file) {
+                                val oldJob = previousInput.parentFile?.takeIf { it.name == "input" }?.parentFile
+                                if (oldJob?.parentFile == File(context.cacheDir, "jobs")) oldJob.deleteRecursively()
+                            }
                             pageVersion++; keepScratch = file.toPath().startsWith(scratch.toPath())
                             detail = "${json.getLong("count")} 项，解压后 ${Rules.size(json.getLong("size"))}"
                         }
@@ -178,7 +184,7 @@ object Tasks {
                         if (code == 0 && job.kind == "test") detail = "压缩包完整性检查通过。"
                     }
                     "zip" -> {
-                        val folder = storage.uniqueDirectory(job.parent ?: storage.results, job.name.removeSuffix(".zip").take(180).ifEmpty { "打包结果" })
+                        val folder = storage.uniqueDirectory(job.parent ?: storage.results, Rules.resultName(job.name.removeSuffix(".zip"), "").ifEmpty { "打包结果" })
                         output = folder
                         ZipCreator(storage).create(job.sources, File(folder, Rules.safeName(job.name)), cancelled::get) { phase, n, total -> progress(phase, n, total) }
                         detail = "已创建 ${job.name}（ZIP 存储模式，不压缩）"

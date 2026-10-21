@@ -27,7 +27,7 @@ class ArchiveIntegrationTest {
     }
     @Before fun setup() { dir = File(context.cacheDir, "android-tests-${System.nanoTime()}").apply { mkdirs() } }
     @After fun cleanup() { dir.deleteRecursively() }
-    private fun fixture(name: String): File = File(dir, name).also { target -> instrumentation.context.assets.open("fixtures/$name").use { input -> target.outputStream().use { input.copyTo(it) } } }
+    private fun fixture(name: String): File = File(dir, name).also { target -> instrumentation.context.assets.open("fixtures/" + if (name.endsWith(".gz")) "$name.fixture" else name).use { input -> target.outputStream().use { input.copyTo(it) } } }
     private fun extract(file: File, folder: String, listener: NativeCallbacks = Listener(), passwords: Array<CharArray> = emptyArray(), depth: Int = 32, limit: Long = 64L shl 20, ask: Boolean = false): JSONObject = JSONObject(
         ArchiverNative.nativeExtractNested(file.path, File(dir, folder).path, engine, passwords, depth, limit, true, ask, listener))
     @Test fun renamedUnicodeNestedAndListDirectory() {
