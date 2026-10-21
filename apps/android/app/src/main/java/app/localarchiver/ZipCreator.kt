@@ -17,6 +17,8 @@ class ZipCreator(private val storage: Storage) {
             if (cancelled()) throw CancellationException()
             require(depth <= 64 && entries.size < 100000) { "目录层数或文件数量过多" }
             Rules.safeName(node.name)
+            require(!node.name.contains(':') && !node.name.contains('\u007f') && path.toByteArray(Charsets.UTF_8).size <= 4096) { "${node.name} 的名称不适合安全归档，请先重命名" }
+            require(node.isDocument || !java.nio.file.Files.isSymbolicLink(node.file.toPath())) { "不打包符号链接" }
             entries.add(node to path)
             if (node.directory) storage.children(node).forEach { collect(it, "$path/${it.name}", depth + 1) }
         }

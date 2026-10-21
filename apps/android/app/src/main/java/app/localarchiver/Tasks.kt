@@ -81,7 +81,7 @@ object Tasks {
         else reply.password?.fill('\u0000')
     }
     fun clearHistory() { records = emptyList(); saveRecords(); publish() }
-    private fun saveRecords() {
+    private fun saveRecords() = runCatching {
         val a = JSONArray()
         records.forEach { a.put(JSONObject().put("id", it.id).put("title", it.title).put("time", it.time).put("code", it.code).put("detail", it.detail).put("output", it.output ?: "")) }
         val file = android.util.AtomicFile(File(context.filesDir, "task-history.json"))

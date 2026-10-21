@@ -28,7 +28,9 @@ class UiWorkflowTest {
     private fun screenshot(name: String) {
         inst.waitForIdleSync()
         val folder = File(context.getExternalFilesDir(null), "screenshots").apply { mkdirs() }
-        inst.uiAutomation.takeScreenshot()?.let { bitmap -> File(folder, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle() }
+        val bitmap = requireNotNull(inst.uiAutomation.takeScreenshot()) { "Emulator screenshot unavailable" }
+        File(folder, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        bitmap.recycle()
     }
     @Test fun browseExtractRotatePasswordPromptAndShowReports() {
         val storage = Storage(context)

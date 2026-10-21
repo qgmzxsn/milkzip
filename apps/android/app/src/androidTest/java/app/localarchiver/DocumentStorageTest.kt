@@ -14,7 +14,7 @@ import java.io.File
 @RunWith(AndroidJUnit4::class)
 class DocumentStorageTest {
     @Test fun stageSplitDocumentsAndExportWithoutOverwrite() {
-        if (Build.VERSION.SDK_INT < 29) return
+        if (Build.VERSION.SDK_INT < 29) { assumeTrue("Shell permission adoption requires API 29", false); return }
         val inst = InstrumentationRegistry.getInstrumentation()
         inst.uiAutomation.adoptShellPermissionIdentity("android.permission.MANAGE_DOCUMENTS")
         val context = inst.targetContext; val storage = Storage(context)
