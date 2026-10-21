@@ -122,7 +122,22 @@ class UiWorkflowTest {
             onView(withText("结果")).perform(click())
             if (Build.VERSION.SDK_INT >= 31) {
                 scenario.onActivity { (it.getSystemService(Context.UI_MODE_SERVICE) as UiModeManager).setApplicationNightMode(UiModeManager.MODE_NIGHT_YES) }
-                inst.waitForIdleSync(); screenshot("05-files-dark")
+                waitFor {
+                    var ready = false
+                    runCatching { scenario.onActivity { ready = it.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_YES && it.window.decorView.hasWindowFocus() } }
+                    ready
+                }
+                // Configuration recreation is asynchronous; verify a drawn dark frame.
+                waitFor {
+                    val raw = inst.uiAutomation.takeScreenshot()
+                    if (raw == null) false else {
+                        val sample = raw.copy(Bitmap.Config.ARGB_8888, false)
+                        val color = sample.getPixel(sample.width / 40, sample.height / 2)
+                        sample.recycle(); raw.recycle()
+                        android.graphics.Color.red(color) in 1..99 && android.graphics.Color.green(color) in 1..99 && android.graphics.Color.blue(color) in 1..99
+                    }
+                }
+                screenshot("05-files-dark")
                 scenario.onActivity { (it.getSystemService(Context.UI_MODE_SERVICE) as UiModeManager).setApplicationNightMode(UiModeManager.MODE_NIGHT_AUTO) }
             }
         }
