@@ -281,6 +281,7 @@ bool looksLikeArchive(const QString &name) {
       QStringLiteral(".webm"), QStringLiteral(".exe"), QStringLiteral(".sfx"),
       QStringLiteral(".zipsc"), QStringLiteral(".gz"), QStringLiteral(".bz2"),
       QStringLiteral(".xz"), QStringLiteral(".zst"), QStringLiteral(".zstd"),
+      QStringLiteral(".lz4"), QStringLiteral(".lzma"), QStringLiteral(".z"),
       QStringLiteral(".cab"), QStringLiteral(".iso"), QStringLiteral(".udf"),
       QStringLiteral(".wim"), QStringLiteral(".swm"), QStringLiteral(".arj"),
       QStringLiteral(".lzh"), QStringLiteral(".lha"), QStringLiteral(".cpio"),
@@ -318,7 +319,7 @@ QString errorText(int code, const QString &detail) {
       if (detail.contains(QStringLiteral("too many entries")))
         return QStringLiteral("压缩包包含超过 100 万个文件条目，暂时无法打开。");
       if (detail.contains(QStringLiteral("no archive")))
-        return QStringLiteral("这个视频或图片里没有压缩包。");
+        return QStringLiteral("未在这个文件中识别到支持的压缩包。");
       return detail.contains(QStringLiteral("symlink"))
                  ? QStringLiteral("这个压缩包包含当前 Windows 版不支持创建的符号链接。")
                  : QStringLiteral("打不开这个文件。");
@@ -330,6 +331,8 @@ QString errorText(int code, const QString &detail) {
                  : QStringLiteral("无法读取或写入文件。请检查文件是否可读、输出位置是否可写，以及磁盘空间。");
     case ARCHIVER_ERR_FORMAT:
       return QStringLiteral("无法完整读取这个压缩包。文件可能损坏、不完整，或与扩展名不符。");
+    case ARCHIVER_ERR_PARTIAL:
+      return QStringLiteral("部分解压完成。其他可解开的包已继续处理。点击“显示详情”查看未解开的分支。");
     case ARCHIVER_ERR_PASSWORD:
       return QStringLiteral("密码不对。");
     default:
@@ -400,6 +403,15 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
   auto *toolsMenu = menuBar()->addMenu(QStringLiteral("工具"));
   connect(toolsMenu->addAction(QStringLiteral("密码本…")), &QAction::triggered, this,
           &MainWindow::showPasswordBook);
+  reportAction_ = toolsMenu->addAction(QStringLiteral("上次解压结果…"));
+  reportAction_->setObjectName(QStringLiteral("extractionReportAction"));
+  reportAction_->setEnabled(false);
+  connect(reportAction_, &QAction::triggered, this, [this] {
+    QMessageBox dialog(QMessageBox::Information, QStringLiteral("上次解压结果"),
+        QStringLiteral("点击“显示详情”查看已解开的包和未完成分支。"), QMessageBox::Ok, this);
+    dialog.setDetailedText(lastExtractReport_);
+    dialog.exec();
+  });
   auto *helpMenu = menuBar()->addMenu(QStringLiteral("帮助"));
   connect(helpMenu->addAction(QStringLiteral("关于")), &QAction::triggered, this, [this] {
     QMessageBox::about(
@@ -717,7 +729,7 @@ void MainWindow::activateRow(const QModelIndex &index) {
     if (row->directory) {
       const QString path = row->path;
       enterArchiveFolder(path.endsWith(QLatin1Char('/')) ? path : path + QLatin1Char('/'));
-    } else if (row->archive || looksLikeArchive(row->name)) {
+    } else {
       // The inner entry cannot be opened directly; run the same default
       // nested extraction as the toolbar button on the containing archive.
       const QString path = archivePath_;
@@ -728,7 +740,7 @@ void MainWindow::activateRow(const QModelIndex &index) {
   if (row->directory) {
     const QString path = row->path;
     browseDirectory(path);
-  } else if (row->archive || looksLikeArchive(row->name)) {
+  } else {
     // Copy before any model reset; rows_ owns the original string.
     const QString path = row->path;
     quickExtract(path);
@@ -739,8 +751,8 @@ void MainWindow::chooseArchive() {
   if (busy_) return;
   const QString path = QFileDialog::getOpenFileName(
       this, QStringLiteral("打开"), directory_,
-      QStringLiteral("压缩包 (*.zip *.7z *.tar *.tgz *.tar.gz *.tbz *.tbz2 *.tar.bz2 "
-                     "*.txz *.tar.xz *.tzst *.tar.zst *.rar *.001 *.gz *.bz2 *.xz *.zst *.cab *.iso *.udf *.wim *.swm *.arj *.lzh *.lha *.cpio *.ar *.deb *.rpm *.dmg *.xar *.mp4 *.mkv *.avi *.mov *.m4v *.webm *.jpg *.jpeg *.png *.gif *.bmp *.webp *.exe *.sfx *.zipsc);;所有文件 (*)"));
+      QStringLiteral("所有文件 (*);;压缩包 (*.zip *.7z *.tar *.tgz *.tar.gz *.tbz *.tbz2 *.tar.bz2 "
+                     "*.txz *.tar.xz *.tzst *.tar.zst *.rar *.001 *.gz *.bz2 *.xz *.zst *.lz4 *.lzma *.Z *.cab *.iso *.udf *.wim *.swm *.arj *.lzh *.lha *.cpio *.ar *.deb *.rpm *.dmg *.xar *.mp4 *.mkv *.avi *.mov *.m4v *.webm *.jpg *.jpeg *.png *.gif *.bmp *.webp *.exe *.sfx *.zipsc)"));
   if (!path.isEmpty()) openPath(path);
 }
 
@@ -1125,10 +1137,18 @@ void MainWindow::startExtract(const QString &sourcePath, const QString &dest, bo
     const ExtractResult result = watcher->result();
     watcher->deleteLater();
     setBusy(false);
+    lastExtractReport_ = QStringLiteral("输出位置：%1\n").arg(QDir::toNativeSeparators(dest)) + result.detail;
+    lastExtractReport_.replace(QStringLiteral("extracted: "), QStringLiteral("已解开："));
+    lastExtractReport_.replace(QStringLiteral("kept container: "), QStringLiteral("保留成品文件："));
+    lastExtractReport_.replace(QStringLiteral("failed [format]: "), QStringLiteral("未解开（损坏或不完整）："));
+    lastExtractReport_.replace(QStringLiteral("failed [missing-volume]: "), QStringLiteral("未解开（缺少分卷）："));
+    lastExtractReport_.replace(QStringLiteral("failed [password-required]: "), QStringLiteral("未解开（需要密码）："));
+    lastExtractReport_.replace(QStringLiteral("failed [unsupported]: "), QStringLiteral("未解开（暂不支持）："));
+    reportAction_->setEnabled(true);
     if (closeAfterFinish_) { close(); return; }
     if (result.code == ARCHIVER_ERR_CANCELLED)
       status_->setText(QStringLiteral("已取消解压。已完成的文件和文件夹可能保留。"));
-    else if (result.code != ARCHIVER_OK) showError(result.code, result.detail);
+    else if (result.code != ARCHIVER_OK) showError(result.code, lastExtractReport_);
     else status_->setText(QStringLiteral("解压完成。文件已保存到 %1").arg(QDir::toNativeSeparators(dest)));
     if (result.passwordSaveFailed)
       QMessageBox::warning(this, QStringLiteral("密码未保存"), QStringLiteral("密码已验证，但密码本已满或无法写入。"));
@@ -1247,7 +1267,9 @@ void MainWindow::cancelExtraction() {
 void MainWindow::showError(int result, const QString &detail) {
   const QString text = errorText(result, detail);
   status_->setText(text);
-  QMessageBox::warning(this, QStringLiteral("MilkZip"), text);
+  QMessageBox dialog(QMessageBox::Warning, QStringLiteral("MilkZip"), text, QMessageBox::Ok, this);
+  if (!detail.isEmpty()) dialog.setDetailedText(detail);
+  dialog.exec();
 }
 
 void MainWindow::dragEnterEvent(QDragEnterEvent *event) {

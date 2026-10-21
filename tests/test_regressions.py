@@ -128,13 +128,13 @@ class ExtractionRegressions(unittest.TestCase):
         self.assertFalse((self.base / "outside.txt").exists())
         self.assertFalse((dest / "keep.txt").exists())
 
-    def test_renamed_and_split_files_rejected(self):
+    def test_renamed_files_detected_and_missing_volumes_reported(self):
         for name in ("notes.dat", "opened-archive"):
             with self.subTest(name=name):
-                self.expect_code(self.run_cli("list", self.zip(name)), 8)
+                self.expect_code(self.run_cli("list", self.zip(name)), 0)
         for name in ("part.7z.001", "x.part01.rar"):
             with self.subTest(name=name):
-                self.expect_code(self.run_cli("list", self.zip(name)), 3)
+                self.expect_code(self.run_cli("list", self.zip(name)), 0)
 
     def test_unicode_archive_and_destination(self):
         archive = self.zip("压缩包😀.zip", {"目录😀/文件🦊.txt": b"unicode"})

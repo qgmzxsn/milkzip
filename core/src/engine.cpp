@@ -34,6 +34,7 @@
 #include "archiver.h"
 #include "path_safety.hpp"
 #include "safe_write.hpp"
+#include "lz4_stream.hpp"
 
 #include <errno.h>
 #include <stdint.h>
@@ -65,9 +66,7 @@ constexpr size_t kMaxSymlink = 4096;
 /* Disguised archives are normally glued to the end of the carrier. Scanning
    only a tail window avoids reading an entire multi-gigabyte video. */
 constexpr uint64_t kDisguiseScanWindow = 32ull << 20;
-/* Nested discovery only needs to recognize a probable inner archive; keep the
-   probe cheap for large media payloads. */
-constexpr uint64_t kNestedProbeScanWindow = 4ull << 20;
+// Inner and explicitly opened carriers use the same detection window.
 
 void wipe_bytes(void *data, size_t size) {
   volatile unsigned char *p = static_cast<volatile unsigned char *>(data);
@@ -219,7 +218,7 @@ enum class Kind {
   TarXz,
   TarZst,
   Rar,
-  Gzip, Bzip2, Xz, Zstd, Cab, Iso, Udf, Wim, Arj, Lzh, Cpio, Ar, Rpm, Dmg, Xar,
+  Gzip, Bzip2, Xz, Zstd, Lzma, Compress, Lz4, Cab, Iso, Udf, Wim, Arj, Lzh, Cpio, Ar, Rpm, Dmg, Xar,
   Split,
   Unsupported
 };
@@ -298,6 +297,10 @@ Kind classify(const std::string &path) {
   const std::pair<const char *, Kind> extra[] = {
       {".gz", Kind::Gzip}, {".bz2", Kind::Bzip2}, {".xz", Kind::Xz},
       {".zst", Kind::Zstd}, {".zstd", Kind::Zstd}, {".cab", Kind::Cab},
+      {".lzma", Kind::Lzma}, {".z", Kind::Compress}, {".lz4", Kind::Lz4},
+      {".zipx", Kind::Zip}, {".jar", Kind::Zip}, {".epub", Kind::Zip},
+      {".docx", Kind::Zip}, {".xlsx", Kind::Zip}, {".pptx", Kind::Zip},
+      {".odt", Kind::Zip}, {".ods", Kind::Zip}, {".odp", Kind::Zip}, {".apk", Kind::Zip},
       {".iso", Kind::Iso}, {".udf", Kind::Udf}, {".wim", Kind::Wim},
       {".swm", Kind::Wim}, {".arj", Kind::Arj}, {".lzh", Kind::Lzh},
       {".lha", Kind::Lzh}, {".cpio", Kind::Cpio}, {".ar", Kind::Ar},
@@ -374,6 +377,7 @@ struct ArchiverArchive {
   std::string source_path;
   VolumeContext volumes;
   std::string fallback_name;
+  bool native_lz4 = false;
 
   ~ArchiverArchive() {
     archive.Release();
@@ -1434,6 +1438,8 @@ const char *outer_name(Kind kind) {
     case Kind::Gzip: return "gzip";
     case Kind::Bzip2: return "bzip2";
     case Kind::Xz: return "xz";
+    case Kind::Lzma: return "lzma";
+    case Kind::Compress: return "Z";
     case Kind::Cab: return "Cab";
     case Kind::Iso: return "Iso";
     case Kind::Udf: return "Udf";
@@ -1629,6 +1635,7 @@ const char *archiver_result_string(ArchiverResult result) {
     case ARCHIVER_ERR_MISSING_VOLUME: return "missing-volume";
     case ARCHIVER_ERR_NEED_CHOICE: return "need-choice";
     case ARCHIVER_ERR_LIMIT: return "limit";
+    case ARCHIVER_ERR_PARTIAL: return "partial";
   }
   return "error";
 }
@@ -1766,17 +1773,7 @@ ArchiverResult open_numeric_volume(ArchiverArchive *archive, Kind kind, const st
   }
   got = read;
   Kind inner = kind_from_signature(sig, got);
-  std::string base = basename_lower(path);
-  if (base.find(".7z.") != std::string::npos && inner != Kind::SevenZ) {
-    archive->message = "not a 7z volume";
-    split->Close();
-    return ARCHIVER_ERR_FORMAT;
-  }
-  if (base.find(".zip.") != std::string::npos && inner != Kind::Zip) {
-    archive->message = "not a zip volume";
-    split->Close();
-    return ARCHIVER_ERR_FORMAT;
-  }
+  // Volume names locate siblings; the concatenated bytes select the format.
   if (inner == Kind::Unsupported) inner = kind;
   GUID inner_id;
   std::string saved_absent = archive->volumes.next_absent;
@@ -1833,7 +1830,7 @@ ArchiverResult try_listed_archive(ArchiverArchive *archive, Kind kind, const std
   std::vector<ListedEntry> probe;
   std::string message;
   ArchiverResult listed = read_entries(archive->archive, probe, message);
-  if (listed == ARCHIVER_OK && !probe.empty()) {
+  if (listed == ARCHIVER_OK) {
     archive->message.clear();
     return ARCHIVER_OK;
   }
@@ -2017,7 +2014,7 @@ ArchiverResult open_disguised(ArchiverArchive *archive, const std::string &path,
   if (zip_start_from_eocd(path, file_size, &zip_at)) remember_hit(hits, Kind::Zip, zip_at);
 
   const std::string base = basename_lower(path);
-  if (ends_with(base, ".exe") || ends_with(base, ".sfx") || ends_with(base, ".zipsc")) {
+  if (hits.empty() || hits[0].offset != 0) {
     std::vector<SliceHit> stub;
     scan_stub_signatures(path, file_size, stub);
     for (const SliceHit &hit : stub) remember_hit(hits, hit.kind, hit.offset);
@@ -2072,6 +2069,74 @@ std::string leading_volume(const std::string &path) {
   return path;
 }
 
+// Extension-independent, bounded reads. Weak formats such as LZMA still have
+// to pass the actual handler; signatures are only candidates.
+Kind content_kind(const std::string &path) {
+  unsigned char h[512] = {};
+  size_t n = 0;
+  if (!read_at(path, 0, h, sizeof(h), &n)) return Kind::Unsupported;
+  Kind primary = kind_from_signature(h, n);
+  if (primary != Kind::Unsupported) return primary;
+  if (n >= 4 && h[0] == 'P' && h[1] == 'K' &&
+      ((h[2] == 5 && h[3] == 6) || (h[2] == 6 && h[3] == 6))) return Kind::Zip;
+  if (n >= 3 && h[0] == 0x1F && h[1] == 0x8B && h[2] == 8) return Kind::Gzip;
+  if (n >= 4 && !memcmp(h, "BZh", 3) && h[3] >= '1' && h[3] <= '9') return Kind::Bzip2;
+  if (n >= 6 && !memcmp(h, "\xfd" "7zXZ\0", 6)) return Kind::Xz;
+  if (n >= 4 && read_u32(h) == 0xFD2FB528u) return Kind::Zstd;
+  if (n >= 4 && (read_u32(h) == 0x184D2204u || read_u32(h) == 0x184C2102u)) return Kind::Lz4;
+  // LZ4 and Zstandard share skippable-frame magic. Walk the frame headers
+  // without reading their potentially large payload, then select the decoder.
+  if (n >= 8 && (read_u32(h) & 0xFFFFFFF0u) == 0x184D2A50u) {
+    uint64_t pos = 0, size = 0;
+    if (file_size_of(path, &size)) for (unsigned i = 0; i < 1024; ++i) {
+      unsigned char frame[8]; size_t got = 0;
+      if (!read_at(path, pos, frame, sizeof(frame), &got) || got < 4) break;
+      const uint32_t magic = read_u32(frame);
+      if (magic == 0xFD2FB528u) return Kind::Zstd;
+      if (magic == 0x184D2204u || magic == 0x184C2102u) return Kind::Lz4;
+      if (got < 8 || (magic & 0xFFFFFFF0u) != 0x184D2A50u) break;
+      const uint64_t skip = 8ull + read_u32(frame + 4);
+      if (pos > size || skip > size - pos) break;
+      pos += skip;
+    }
+  }
+  if (n >= 3 && h[0] == 0x1F && h[1] == 0x9D) return Kind::Compress;
+  if (n >= 8 && !memcmp(h, "MSCF\0\0\0\0", 8)) return Kind::Cab;
+  if (n >= 8 && !memcmp(h, "MSWIM\0\0\0", 8)) return Kind::Wim;
+  if (n >= 4 && !memcmp(h, "xar!", 4)) return Kind::Xar;
+  if (n >= 8 && !memcmp(h, "!<arch>\n", 8)) return Kind::Ar;
+  if (n >= 4 && read_u32(h) == 0xDBEEABEDu) return Kind::Rpm;
+  if (n >= 2 && h[0] == 0x60 && h[1] == 0xEA) return Kind::Arj;
+  if (n >= 7 && h[2] == '-' && h[3] == 'l' && (h[4] == 'h' || h[4] == 'z') && h[6] == '-') return Kind::Lzh;
+  if ((n >= 6 && !memcmp(h, "07070", 5)) || (n >= 2 &&
+      ((h[0] == 0xC7 && h[1] == 0x71) || (h[0] == 0x71 && h[1] == 0xC7)))) return Kind::Cpio;
+  if (n >= 262 && !memcmp(h + 257, "ustar", 5)) return Kind::Tar;
+  if (n >= 13 && h[0] < 225) {
+    const uint32_t dictionary = read_u32(h + 1);
+    const bool valid_dictionary = dictionary >= 4096 && dictionary <= (1u << 30) &&
+        (((dictionary & (dictionary - 1)) == 0) ||
+         (dictionary % 3 == 0 && ((dictionary / 3) & (dictionary / 3 - 1)) == 0));
+    if (valid_dictionary && (read_u64(h + 5) == UINT64_MAX || read_u64(h + 5) <= kWriteCap)) return Kind::Lzma;
+  }
+  unsigned char marker[6]; size_t got = 0;
+  if (read_at(path, 32768, marker, sizeof(marker), &got) && got == 6) {
+    if (!memcmp(marker + 1, "CD001", 5)) return Kind::Iso;
+    if (!memcmp(marker + 1, "BEA01", 5)) return Kind::Udf;
+  }
+  uint64_t size = 0;
+  if (file_size_of(path, &size) && size >= 512 &&
+      read_at(path, size - 512, marker, 4, &got) && got == 4 && !memcmp(marker, "koly", 4)) return Kind::Dmg;
+  return Kind::Unsupported;
+}
+
+bool carrier_header(const std::string &path) {
+  unsigned char h[16] = {}; size_t n = 0;
+  read_at(path, 0, h, sizeof(h), &n);
+  return (n >= 2 && ((h[0] == 'M' && h[1] == 'Z') || (h[0] == 0xFF && h[1] == 0xD8))) ||
+      (n >= 8 && (!memcmp(h, "\x89PNG\r\n\x1a\n", 8) || !memcmp(h + 4, "ftyp", 4))) ||
+      (n >= 4 && (!memcmp(h, "RIFF", 4) || !memcmp(h, "GIF8", 4) || read_u32(h) == 0xA3DF451Au));
+}
+
 ArchiverResult open_archive_impl(const char *input_path, const char *engine_path,
                                  const char *password, ArchiverArchive **out,
                                  uint64_t scan_window) {
@@ -2087,22 +2152,40 @@ ArchiverResult open_archive_impl(const char *input_path, const char *engine_path
     return ARCHIVER_ERR_MISSING_VOLUME;
   }
 
-  Kind kind = classify(archive_path);
-  bool disguise = false;
-  if (kind == Kind::Unsupported) {
-    if (!is_disguise_carrier(archive_path)) return ARCHIVER_ERR_UNSUPPORTED;
-    disguise = true;
-  }
+  const Kind hint = classify(archive_path);
+  Kind detected = content_kind(archive_path);
+  Kind kind = detected == Kind::Unsupported ? hint : detected;
+  // Preserve the existing transparent tar wrappers when the suffix agrees.
+  if ((hint == Kind::TarGz && detected == Kind::Gzip) ||
+      (hint == Kind::TarBz2 && detected == Kind::Bzip2) ||
+      (hint == Kind::TarXz && detected == Kind::Xz) ||
+      (hint == Kind::TarZst && detected == Kind::Zstd) ||
+      (hint == Kind::Udf && detected == Kind::Iso)) kind = hint;
+  const bool disguise = kind == Kind::Unsupported;
 
   std::unique_ptr<ArchiverArchive> archive(new ArchiverArchive());
   archive->source_path = archive_path;
-  if (kind == Kind::Gzip || kind == Kind::Bzip2 || kind == Kind::Xz || kind == Kind::Zstd) {
+  if (kind == Kind::Gzip || kind == Kind::Bzip2 || kind == Kind::Xz || kind == Kind::Zstd ||
+      kind == Kind::Lzma || kind == Kind::Compress || kind == Kind::Lz4) {
     std::string name = archive_path;
     size_t slash = name.find_last_of("/\\");
     if (slash != std::string::npos) name.erase(0, slash + 1);
     size_t dot = name.rfind('.');
     if (dot != std::string::npos) name.resize(dot);
+    else name += ".out";
     archive->fallback_name = name.empty() ? "content" : name;
+  }
+  if (kind == Kind::Lz4) {
+    if (detected != Kind::Lz4) {
+      archive->message = "invalid LZ4 header"; *out = archive.release(); return ARCHIVER_ERR_FORMAT;
+    }
+    archive->native_lz4 = true;
+    ListedEntry entry; entry.path = archive->fallback_name;
+    entry.packed_size = 0; file_size_of(archive_path, &entry.packed_size);
+    if (archiver::check_entry_path(entry.path).reject != archiver::PathReject::Ok) {
+      archive->message = "refused stream filename"; *out = archive.release(); return ARCHIVER_ERR_PATH;
+    }
+    archive->entries.push_back(entry); *out = archive.release(); return ARCHIVER_OK;
   }
   fill_volume_context(archive->volumes, archive_path);
   PasswordState pw = password_from(password);
@@ -2198,6 +2281,16 @@ void archiver_entry_free(ArchiverEntry *entry) {
   entry->path = nullptr;
 }
 
+FILE *open_read(const char *path);
+
+ArchiverResult process_lz4(ArchiverArchive *archive, archiver::SafeDest::File *output,
+    ArchiverProgressCallback progress, void *user) {
+  std::unique_ptr<FILE, decltype(&fclose)> input(open_read(archive->source_path.c_str()), fclose);
+  if (!input) { archive->message = "could not read LZ4 file"; return ARCHIVER_ERR_IO; }
+  archive->message.clear();
+  return archiver::decode_lz4(input.get(), output, progress, user, archive->message);
+}
+
 ArchiverResult archiver_extract(ArchiverArchive *archive, const char *dest_dir, const char *password) {
   return archiver_extract_with_progress(archive, dest_dir, password, nullptr, nullptr);
 }
@@ -2206,6 +2299,20 @@ ArchiverResult archiver_extract_with_progress(
     ArchiverArchive *archive, const char *dest_dir, const char *password,
     ArchiverProgressCallback progress, void *user) {
   if (!archive || !dest_dir || !dest_dir[0]) return ARCHIVER_ERR_ARGUMENT;
+  if (archive->native_lz4) {
+    std::string error;
+    auto dest = archiver::SafeDest::open(dest_dir, error);
+    if (!dest) {
+      archive->message = error;
+      return error == "symlink-component" ? ARCHIVER_ERR_PATH : ARCHIVER_ERR_IO;
+    }
+    auto output = dest->create_file(archive->fallback_name, error);
+    if (!output) { archive->message = error; return ARCHIVER_ERR_IO; }
+    const ArchiverResult result = process_lz4(archive, output.get(), progress, user);
+    if (result != ARCHIVER_OK) return result;
+    if (!output->commit(error)) { archive->message = error; return ARCHIVER_ERR_IO; }
+    return ARCHIVER_OK;
+  }
   if (!archive->archive) {
     if (archive->message.empty()) archive->message = "archive is not open";
     return ARCHIVER_ERR_FORMAT;
@@ -2353,8 +2460,8 @@ ArchiverResult archiver_open_with_passwords(const char *archive_path, const char
   *out = nullptr;
   ArchiverArchive *opened = nullptr;
   ArchiverResult result = archiver_open(archive_path, engine_path, nullptr, &opened);
-  if (result == ARCHIVER_OK && opened && opened->archive &&
-      !archive_has_encrypted_item(opened->archive)) {
+  if (result == ARCHIVER_OK && opened && (opened->native_lz4 ||
+      (opened->archive && !archive_has_encrypted_item(opened->archive)))) {
     *out = opened;
     return ARCHIVER_OK;
   }
@@ -2419,6 +2526,7 @@ ArchiverResult archiver_open_with_passwords(const char *archive_path, const char
 
 ArchiverResult archiver_test(ArchiverArchive *archive, const char *password) {
   if (!archive) return ARCHIVER_ERR_ARGUMENT;
+  if (archive->native_lz4) return process_lz4(archive, nullptr, nullptr, nullptr);
   if (!archive->archive) {
     if (archive->message.empty()) archive->message = "archive is not open";
     return ARCHIVER_ERR_FORMAT;
@@ -2596,8 +2704,25 @@ struct NestedBudget {
   uint64_t bytes = 0;
   uint32_t files = 0;
   std::vector<std::string> secrets;
+  std::string report;
+  void record(const std::string &line) {
+    if (report.size() + line.size() + 1 <= 16384) report += line + "\n";
+  }
   ~NestedBudget() { for (auto &secret : secrets) wipe_string(secret); }
 };
+
+bool preserve_container(const std::string &path, const ArchiverArchive *archive) {
+  const std::string base = basename_lower(path);
+  const char *suffixes[] = {".docx", ".docm", ".xlsx", ".xlsm", ".pptx", ".pptm",
+      ".odt", ".ods", ".odp", ".epub", ".jar", ".war", ".apk", ".ipa", ".xpi", ".appx", ".msix"};
+  for (const char *suffix : suffixes) if (ends_with(base, suffix)) return true;
+  if (archive) for (const auto &item : archive->entries) {
+    if (item.path == "word/document.xml" || item.path == "xl/workbook.xml" ||
+        item.path == "ppt/presentation.xml" || item.path == "META-INF/container.xml" ||
+        item.path == "META-INF/MANIFEST.MF" || item.path == "AndroidManifest.xml") return true;
+  }
+  return false;
+}
 
 bool delete_file_at(const std::string &path) {
 #if defined(_WIN32)
@@ -2645,6 +2770,7 @@ ArchiverResult nested_extract(const std::string &path, const char *engine, const
                               const char *chosen, NestedBudget &budget, ArchiverProgressCallback progress,
                               void *progress_user, std::string &message,
                               const ArchiverNestedOptions *options = nullptr) {
+  message.clear();
   const uint32_t depth_limit = options ? options->max_depth : kNestedDepthLimit;
   const uint64_t byte_limit = options ? (options->max_output_bytes ? options->max_output_bytes : kWriteCap)
                                      : kNestedByteLimit;
@@ -2717,13 +2843,16 @@ ArchiverResult nested_extract(const std::string &path, const char *engine, const
     if (options->password_accepted) options->password_accepted(entered.c_str(), options->user);
   }
   wipe_string(entered);
+  // Failed branches can already have written completed files. Charge them too
+  // before continuing so repeated bad branches cannot evade the shared budget.
+  budget.bytes += extracted == ARCHIVER_OK ? std::max(declared, reporting.written) : reporting.written;
+  budget.files += count;
   if (extracted != ARCHIVER_OK) {
     message = reporting.exceeded ? "output byte limit" : archive->message;
     return reporting.exceeded ? ARCHIVER_ERR_LIMIT : extracted;
   }
   held.reset();
-  budget.bytes += std::max(declared, reporting.written);
-  budget.files += count;
+  budget.record("extracted: " + path);
   ++budget.depth;
   struct DepthGuard { int &depth; ~DepthGuard() { --depth; } } guard{budget.depth};
   if (options && static_cast<uint32_t>(budget.depth) >= depth_limit) return ARCHIVER_OK;
@@ -2740,23 +2869,30 @@ ArchiverResult nested_extract(const std::string &path, const char *engine, const
         return !item.is_dir && !item.is_symlink && item.path == first;
       });
       if (present) continue;
-      message = "missing volume: " + first;
-      return ARCHIVER_ERR_MISSING_VOLUME;
+      archives.push_back(rel);
+      continue;
     }
-    if (classify(rel) == Kind::Unsupported && !is_disguise_carrier(rel)) continue;
+    const std::string full = join_dir(dest, rel);
+    const Kind hint = classify(rel), detected = content_kind(full);
+    if (hint == Kind::Unsupported && detected == Kind::Unsupported &&
+        !is_disguise_carrier(rel) && !carrier_header(full)) continue;
     if (progress && progress(0, 0, progress_user)) return ARCHIVER_ERR_CANCELLED;
     ArchiverArchive *inner = nullptr;
-    ArchiverResult trial = open_archive_impl(join_dir(dest, rel).c_str(), engine, nullptr, &inner,
-                                             kNestedProbeScanWindow);
+    ArchiverResult trial = open_archive_impl(full.c_str(), engine, nullptr, &inner, kDisguiseScanWindow);
     bool is_archive = trial == ARCHIVER_OK || trial == ARCHIVER_ERR_PASSWORD_REQUIRED ||
                       trial == ARCHIVER_ERR_PASSWORD || trial == ARCHIVER_ERR_MISSING_VOLUME;
-    if (!is_archive && classify(rel) != Kind::Unsupported) {
+    if (trial == ARCHIVER_ERR_PATH || trial == ARCHIVER_ERR_ENGINE) {
       message = rel + ": " + (inner ? inner->message : archiver_result_string(trial));
       archiver_close(inner);
       return trial;
     }
+    if (trial == ARCHIVER_OK && preserve_container(rel, inner)) {
+      budget.record("kept container: " + rel);
+      archiver_close(inner);
+      continue;
+    }
     archiver_close(inner);
-    if (is_archive) archives.push_back(rel);
+    if (is_archive || hint != Kind::Unsupported || detected != Kind::Unsupported) archives.push_back(rel);
   }
   if (archives.empty()) return ARCHIVER_OK;
   int decision = archives.size() == 1 ? 0 : -4;
@@ -2775,6 +2911,9 @@ ArchiverResult nested_extract(const std::string &path, const char *engine, const
     for (const auto &rel : archives) message += "\n" + rel;
     return ARCHIVER_ERR_NEED_CHOICE;
   }
+  ArchiverResult first_error = ARCHIVER_OK;
+  bool partial_branch = false;
+  size_t completed_branches = 0;
   for (size_t i = 0; i < archives.size(); ++i) {
     if (decision != -3 && static_cast<size_t>(decision) != i) continue;
     std::string next_dest = dest;
@@ -2791,10 +2930,21 @@ ArchiverResult nested_extract(const std::string &path, const char *engine, const
     std::string full = join_dir(dest, archives[i]);
     ArchiverResult deeper = nested_extract(full, engine, next_dest, passwords, password_count,
         nullptr, budget, progress, progress_user, message, options);
-    if (deeper != ARCHIVER_OK) return deeper;
+    if (deeper != ARCHIVER_OK) {
+      budget.record("failed [" + std::string(archiver_result_string(deeper)) + "]: " + archives[i] + ": " + message);
+      if (decision != -3 || deeper == ARCHIVER_ERR_CANCELLED || deeper == ARCHIVER_ERR_LIMIT ||
+          deeper == ARCHIVER_ERR_PATH || deeper == ARCHIVER_ERR_ENGINE) return deeper;
+      if (first_error == ARCHIVER_OK) first_error = deeper;
+      partial_branch = partial_branch || deeper == ARCHIVER_ERR_PARTIAL;
+      continue;
+    }
+    ++completed_branches;
     // Keep all volume parts together; never leave a broken set by deleting only .001.
     if ((!options || !options->keep_intermediate) && split_kind(basename_lower(full)) == Kind::Unsupported)
       delete_file_at(full);
+  }
+  if (first_error != ARCHIVER_OK) {
+    return completed_branches || partial_branch ? ARCHIVER_ERR_PARTIAL : first_error;
   }
   return ARCHIVER_OK;
 }
@@ -2824,6 +2974,7 @@ ArchiverResult archiver_extract_nested_ex(const char *archive_path, const char *
   std::string message;
   ArchiverResult result = nested_extract(archive_path, engine_path, dest_dir, passwords, password_count,
       nullptr, budget, progress, progress_user, message, options);
+  if (!budget.report.empty()) message = budget.report + (message.empty() ? "" : "detail: " + message);
   copy_message(message_buf, message_cap, message);
   return result;
 }

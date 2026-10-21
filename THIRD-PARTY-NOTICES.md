@@ -12,6 +12,7 @@ license information for the shipped dependencies follows.
 
 | Component | Version | License / source |
 | --- | --- | --- |
+| LZ4 / xxHash (linked into the core) | LZ4 1.10.0 | BSD 2-Clause. `LICENSES/lz4-license.txt`. Unmodified library sources: https://github.com/lz4/lz4/tree/v1.10.0/lib |
 | 7-Zip (`7z.dll`) | 26.04 | LGPL 2.1 with additional unRAR/BSD terms. `LICENSES/7-zip-license.txt`, `LICENSES/lgpl-2.1.txt`, `LICENSES/unrar-license.txt`. Source: https://www.7-zip.org/a/7z2604-src.tar.xz |
 | Qt Core, Gui, Widgets, Concurrent, platform/style plugins | 6.8.3 | LGPL 3.0 (see `LICENSES/qt-LGPL-3.0.txt` and `LICENSES/qt-GPL-3.0.txt`). Corresponding source: https://download.qt.io/archive/qt/6.8/6.8.3/submodules/qtbase-everywhere-src-6.8.3.tar.xz |
 | Qt Chinese translation (MinGW release packages) | 6.8.3 | Qt license texts above. Source: https://download.qt.io/archive/qt/6.8/6.8.3/submodules/qttranslations-everywhere-src-6.8.3.tar.xz |

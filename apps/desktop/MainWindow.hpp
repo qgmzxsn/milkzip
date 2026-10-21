@@ -11,6 +11,7 @@ class QProgressBar;
 class QPushButton;
 class QTableView;
 class QTimer;
+class QAction;
 struct ArchiveSession;
 struct DesktopSecret;
 struct DesktopWorkState;
@@ -58,6 +59,8 @@ class MainWindow : public QMainWindow {
   QPushButton *upButton_ = nullptr;
   QPushButton *cancelButton_ = nullptr;
   QTimer *timer_ = nullptr;
+  QAction *reportAction_ = nullptr;
+  QString lastExtractReport_;
   std::shared_ptr<ArchiveSession> archive_;
   std::shared_ptr<DesktopWorkState> work_;
   QString archivePath_;

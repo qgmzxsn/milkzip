@@ -1,6 +1,7 @@
 #include "MainWindow.hpp"
 #include "extract_path.hpp"
 #include <QAbstractItemModel>
+#include <QAction>
 #include <QApplication>
 #include <QDir>
 #include <QFile>
@@ -253,6 +254,72 @@ class DesktopTests : public QObject {
     QFile output(temp.path() + "/quick/hello.txt");
     QVERIFY(output.open(QIODevice::ReadOnly));
     QCOMPARE(output.readAll(), QByteArray("quick contents"));
+    auto *report = window.findChild<QAction *>("extractionReportAction");
+    QVERIFY(report && report->isEnabled());
+  }
+  void doubleClickRenamedArchiveWithoutChangingSuffix() {
+    QTemporaryDir temp(QDir::currentPath() + "/desktop-test-XXXXXX");
+    QVERIFY(temp.isValid());
+    const QString original = temp.path() + "/original.zip";
+    const QString renamed = temp.path() + "/archive.txt";
+    QVERIFY(makeArchive(temp.path(), original, "renamed payload"));
+    QVERIFY(QFile::rename(original, renamed));
+    MainWindow window;
+    auto *pathBar = window.findChild<QLineEdit *>("pathBar");
+    pathBar->setText(temp.path());
+    QVERIFY(QMetaObject::invokeMethod(pathBar, "returnPressed", Qt::DirectConnection));
+    auto *table = window.findChild<QTableView *>("archiveTable");
+    QModelIndex target;
+    for (int row = 0; row < table->model()->rowCount(); ++row) {
+      const auto index = table->model()->index(row, 0);
+      if (index.data().toString() == "archive.txt") target = index;
+    }
+    QVERIFY(target.isValid());
+    QString unexpectedError;
+    QTimer closeUnexpected;
+    connect(&closeUnexpected, &QTimer::timeout, [&] {
+      if (auto *dialog = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+        unexpectedError = dialog->text() + "\n" + dialog->detailedText();
+        dialog->accept();
+      }
+    });
+    closeUnexpected.start(10);
+    QVERIFY(QMetaObject::invokeMethod(table, "doubleClicked", Qt::DirectConnection, Q_ARG(QModelIndex, target)));
+    QTRY_VERIFY_WITH_TIMEOUT(!window.isBusy(), 15000);
+    QVERIFY2(unexpectedError.isEmpty(), qPrintable(unexpectedError));
+    QFile output(suggestedExtractDirectory(renamed) + "/hello.txt");
+    QVERIFY(output.open(QIODevice::ReadOnly));
+    QCOMPARE(output.readAll(), QByteArray("renamed payload"));
+    QVERIFY(QFile::exists(renamed));
+  }
+  void partialExtractionContinuesAndExposesReport() {
+    QTemporaryDir temp(QDir::currentPath() + "/desktop-test-XXXXXX");
+    QVERIFY(temp.isValid());
+    QVERIFY(makeArchive(temp.path(), temp.path() + "/good.zip", "independent branch"));
+    QFile bad(temp.path() + "/bad.zip");
+    QVERIFY(bad.open(QIODevice::WriteOnly)); bad.write("not ZIP"); bad.close();
+    QProcess process;
+    process.setWorkingDirectory(temp.path());
+    process.start(sevenZip, {"a", "-tzip", "outer.zip", "good.zip", "bad.zip"});
+    QVERIFY(process.waitForFinished(15000)); QCOMPARE(process.exitCode(), 0);
+    MainWindow window;
+    QString report;
+    QTimer closeWarning;
+    connect(&closeWarning, &QTimer::timeout, [&] {
+      if (auto *dialog = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+        report = dialog->detailedText(); dialog->accept();
+      }
+    });
+    closeWarning.start(10);
+    window.quickExtract(temp.path() + "/outer.zip");
+    QTRY_VERIFY_WITH_TIMEOUT(!window.isBusy(), 15000);
+    QFile output(temp.path() + "/outer/good.zip.unpacked/hello.txt");
+    QVERIFY(output.open(QIODevice::ReadOnly));
+    QCOMPARE(output.readAll(), QByteArray("independent branch"));
+    QVERIFY(QFile::exists(temp.path() + "/outer/bad.zip"));
+    QVERIFY(window.findChild<QLabel *>("statusLabel")->text().contains(QStringLiteral("部分解压完成")));
+    QVERIFY(report.contains("bad.zip")); QVERIFY(report.contains("good.zip"));
+    QVERIFY(window.findChild<QAction *>("extractionReportAction")->isEnabled());
   }
   void uiPreview() {
     const QString outputDir = qEnvironmentVariable("ARCHIVER_UI_PREVIEW_DIR");
