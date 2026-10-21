@@ -65,7 +65,7 @@ class ArchiveIntegrationTest {
         assertEquals(10, extract(File(dir, names.first()), "missing").getInt("code"))
     }
     @Test fun nativeLz4AndCompressedStreams() {
-        for (name in listOf("linked.lz4", "legacy.lz4", "payload.gz", "payload.bz2", "payload.xz")) {
+        for (name in listOf("linked.lz4", "legacy.lz4", "payload.gz", "payload.bz2", "payload.xz", "payload.tar.gz")) {
             val file = fixture(name); val json = extract(file, "out-$name")
             assertEquals("$name: $json", 0, json.getInt("code"))
             assertTrue(File(dir, "out-$name").walkTopDown().any { it.isFile && it.length() > 0 })
