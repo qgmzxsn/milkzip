@@ -130,6 +130,17 @@ class ArchiveIntegrationTest {
             val imported = book.import("\uFEFF新密码\r\n新密码\n 尾空格 \n")
             assertEquals(2, imported.second); assertEquals(" 尾空格 ", imported.first.last())
             assertEquals(2, book.read().size)
+            val original = book.read()
+            val errors = java.util.concurrent.ConcurrentLinkedQueue<Throwable>()
+            val threads = listOf("并发 A", "并发 B").map { value -> Thread {
+                try { PasswordBook(context).addVerified(value) } catch (error: Throwable) { errors.add(error) }
+            }.apply { start() } }
+            threads.forEach { it.join(10000) }
+            assertTrue(errors.toString(), errors.isEmpty())
+            assertTrue(book.read().containsAll(listOf("并发 A", "并发 B")))
+            book.saveEdited(original, original.drop(1) + "手动编辑")
+            assertTrue(book.read().containsAll(listOf("并发 A", "并发 B", "手动编辑")))
+            assertFalse(book.read().contains(original.first()))
         } finally { book.write(old) }
     }
 }

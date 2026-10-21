@@ -54,6 +54,7 @@ class MainActivity : Activity() {
     private var activeProgress: ProgressBar? = null
     private var latestRecord: String? = null
     private var passwordDraft = mutableListOf<String>()
+    private var passwordOriginal = emptyList<String>()
     private var passwordDirty = false
     private var revealPasswords = false
     private var pendingExtract: Node? = null
@@ -62,8 +63,8 @@ class MainActivity : Activity() {
     private var pendingName = ""
     private var externalSources = emptyList<Node>()
     private var loading = false
-    private data class Retained(val parents: List<Node>, val archive: ArchivePage?, val draft: List<String>, val dirty: Boolean, val query: String, val selected: Set<String>)
-    override fun onRetainNonConfigurationInstance(): Any = Retained(parents.toList(), archive, passwordDraft.toList(), passwordDirty, query, selected.toSet())
+    private data class Retained(val parents: List<Node>, val archive: ArchivePage?, val draft: List<String>, val original: List<String>, val dirty: Boolean, val query: String, val selected: Set<String>)
+    override fun onRetainNonConfigurationInstance(): Any = Retained(parents.toList(), archive, passwordDraft.toList(), passwordOriginal, passwordDirty, query, selected.toSet())
     private val dark get() = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
     private val bg get() = Color.parseColor(if (dark) "#141B18" else "#F7F9F6")
     private val surface get() = Color.parseColor(if (dark) "#202A24" else "#FFFFFF")
@@ -99,7 +100,7 @@ class MainActivity : Activity() {
         if (folder == null) folder = storage.fromFile(if (storage.allFiles) File(storage.shared, "Download").takeIf { it.isDirectory } ?: storage.shared else storage.results)
         archive = Tasks.page
         val retained = lastNonConfigurationInstance as? Retained
-        retained?.let { parents.addAll(it.parents); archive = it.archive; passwordDraft = it.draft.toMutableList(); passwordDirty = it.dirty; query = it.query; selected.addAll(it.selected) }
+        retained?.let { parents.addAll(it.parents); archive = it.archive; passwordDraft = it.draft.toMutableList(); passwordOriginal = it.original; passwordDirty = it.dirty; query = it.query; selected.addAll(it.selected) }
         pageVersion = Tasks.pageVersion
         latestRecord = Tasks.records.firstOrNull()?.id
         buildShell()
@@ -569,7 +570,7 @@ class MainActivity : Activity() {
     }
     private fun passwordInput() = EditText(this).apply { inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS; isSaveEnabled = false; setSingleLine(); hint = "密码（保留首尾空格）"; importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS }
     private fun loadPasswords() {
-        runCatching { PasswordBook(this).read() }.fold({ passwordDraft = it.toMutableList(); passwordDirty = false; render() }, {
+        runCatching { PasswordBook(this).read() }.fold({ passwordDraft = it.toMutableList(); passwordOriginal = it; passwordDirty = false; render() }, {
             passwordDraft.clear(); render(); AlertDialog.Builder(this).setTitle("密码本无法读取").setMessage("${it.message}\n现有加密文件没有被覆盖。若密钥已经失效，可重置密码本后重新添加。")
                 .setPositiveButton("关闭", null).setNegativeButton("重置密码本") { _, _ -> AlertDialog.Builder(this).setTitle("删除原密码本并重置？").setMessage("此操作会清空本机已保存的密码。")
                     .setPositiveButton("重置") { _, _ -> runCatching { PasswordBook(this).write(emptyList()) }.onSuccess { loadPasswords() }.onFailure(::failure) }.setNegativeButton("取消", null).show() }.show()
@@ -604,7 +605,7 @@ class MainActivity : Activity() {
         layout.addView(list, LinearLayout.LayoutParams(-1, 0, 1f))
         if (passwordDraft.isEmpty()) layout.add(text("还没有保存的密码\n解压时可选择“验证成功后保存”。", 14f, muted))
     }
-    private fun savePasswords(): Boolean = try { PasswordBook(this).write(passwordDraft); passwordDirty = false; notify("密码本已保存"); true } catch (error: Exception) { failure(error); false }
+    private fun savePasswords(): Boolean = try { val saved = PasswordBook(this).saveEdited(passwordOriginal, passwordDraft); passwordDraft = saved.toMutableList(); passwordOriginal = saved; passwordDirty = false; notify("密码本已保存"); true } catch (error: Exception) { failure(error); false }
     private fun editPassword(index: Int? = null) {
         val input = passwordInput().apply { index?.let { setText(passwordDraft[it]) } }
         val form = padded(column(), 20).apply { add(input); add(CheckBox(this@MainActivity).apply { text = "显示密码"; setOnCheckedChangeListener { _, checked -> input.transformationMethod = if (checked) null else PasswordTransformationMethod.getInstance() } }) }

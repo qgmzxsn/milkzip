@@ -88,7 +88,8 @@ public class TestDocumentsProvider extends DocumentsProvider {
     @Override public void deleteDocument(String documentId) throws FileNotFoundException {
         File file = file(documentId); if (file.equals(base())) throw new FileNotFoundException("Cannot delete root"); remove(file);
     }
-    @Override public boolean isChildDocument(String parentId, String documentId) throws FileNotFoundException {
-        return file(documentId).getAbsolutePath().startsWith(file(parentId).getAbsolutePath() + "/");
+    @Override public boolean isChildDocument(String parentId, String documentId) {
+        try { return file(documentId).getAbsolutePath().startsWith(file(parentId).getAbsolutePath() + "/"); }
+        catch (FileNotFoundException error) { return false; }
     }
 }
