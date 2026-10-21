@@ -566,6 +566,7 @@ class MainActivity : Activity() {
             } }
             promptDialog!!.setOnDismissListener { password.text.clear(); if (tab != 2) window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) }
         }
+        if (p.branches == null) promptDialog!!.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         promptDialog!!.setCanceledOnTouchOutside(false); promptDialog!!.show()
     }
     private fun passwordInput() = EditText(this).apply { inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS; isSaveEnabled = false; setSingleLine(); hint = "密码（保留首尾空格）"; importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS }
@@ -610,6 +611,7 @@ class MainActivity : Activity() {
         val input = passwordInput().apply { index?.let { setText(passwordDraft[it]) } }
         val form = padded(column(), 20).apply { add(input); add(CheckBox(this@MainActivity).apply { text = "显示密码"; setOnCheckedChangeListener { _, checked -> input.transformationMethod = if (checked) null else PasswordTransformationMethod.getInstance() } }) }
         AlertDialog.Builder(this).setTitle(if (index == null) "添加密码" else "修改密码").setView(form).setPositiveButton("确定", null).setNegativeButton("取消", null).create().apply {
+            window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
             setOnShowListener { getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 val value = input.text.toString()
                 if (!Rules.validPassword(value)) { input.error = "请输入 1–1024 字节的密码"; return@setOnClickListener }

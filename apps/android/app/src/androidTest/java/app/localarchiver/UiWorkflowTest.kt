@@ -27,15 +27,23 @@ class UiWorkflowTest {
     }
     private fun screenshot(name: String) {
         inst.waitForIdleSync()
-        val folder = File(context.getExternalFilesDir(null), "screenshots").apply { mkdirs() }
-        val bitmap = requireNotNull(inst.uiAutomation.takeScreenshot()) { "Emulator screenshot unavailable" }
-        File(folder, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
-        bitmap.recycle()
-        // Gradle uninstalls the tested app afterwards; retain screenshots in shared Downloads.
-        android.os.ParcelFileDescriptor.AutoCloseInputStream(inst.uiAutomation.executeShellCommand("mkdir -p /sdcard/Download/MilkZipScreenshots && cp '${File(folder, "$name.png").path}' /sdcard/Download/MilkZipScreenshots/$name.png")).use { it.readBytes() }
+        fun shell(command: String): String = android.os.ParcelFileDescriptor.AutoCloseInputStream(inst.uiAutomation.executeShellCommand(command)).bufferedReader().use { it.readText() }
+        // UiAutomation.exec uses Runtime.exec, so each command is issued separately.
+        // Shared Downloads survive Gradle uninstalling the tested APK.
+        shell("mkdir -p /sdcard/Download/MilkZipScreenshots")
+        shell("screencap -p /sdcard/Download/MilkZipScreenshots/$name.png")
+        val bytes = shell("stat -c %s /sdcard/Download/MilkZipScreenshots/$name.png").trim().toLongOrNull() ?: 0
+        assertTrue("Emulator screenshot was not retained: $name", bytes > 1024)
     }
     @org.junit.After fun finishPendingTask() {
         if (Tasks.state != null) { Tasks.cancel(); waitFor { Tasks.state == null } }
+    }
+    private fun assertPasswordWindowIsSecure() {
+        onView(withHint("密码（保留首尾空格）")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).check { view, error ->
+            if (error != null) throw error
+            val flags = (view.rootView.layoutParams as android.view.WindowManager.LayoutParams).flags
+            assertTrue(flags and android.view.WindowManager.LayoutParams.FLAG_SECURE != 0)
+        }
     }
     @Test fun cachedDocumentsSurviveFolderBrowsingAndAreReplacedSafely() {
         DocumentFixture.grant()
@@ -95,6 +103,7 @@ class UiWorkflowTest {
             waitFor { Tasks.prompt != null }
             scenario.recreate()
             waitFor { inst.uiAutomation.rootInActiveWindow?.findAccessibilityNodeInfosByText("需要解压密码")?.isNotEmpty() == true }
+            assertPasswordWindowIsSecure()
             onView(withHint("密码（保留首尾空格）")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(replaceText("安卓 密码"), closeSoftKeyboard())
             onView(withText("继续")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(click())
             waitFor { Tasks.state == null }
@@ -103,6 +112,7 @@ class UiWorkflowTest {
             screenshot("04-tasks")
             onView(withTagValue(equalTo("nav2"))).perform(click())
             onView(withText("添加")).perform(click())
+            assertPasswordWindowIsSecure()
             onView(withHint("密码（保留首尾空格）")).perform(replaceText(" 测试密码 "), closeSoftKeyboard())
             onView(withText("确定")).perform(click())
             onView(withText("保存 *")).perform(click())
