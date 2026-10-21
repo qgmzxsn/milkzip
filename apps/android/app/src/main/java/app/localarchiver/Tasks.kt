@@ -23,6 +23,7 @@ internal data class Job(
     val parent: File? = null, val name: String = "", val exportTree: String? = null
 )
 data class TaskRecord(val id: String, val title: String, val time: Long, val code: Int, val detail: String, val output: String?)
+data class OpenFailure(val recordId: String, val source: Node)
 data class TaskState(val title: String, val phase: String, val done: Long = 0, val total: Long = 0, val waiting: Boolean = false)
 data class Prompt(val id: String = UUID.randomUUID().toString(), val path: String = "", val rejected: Boolean = false, val branches: List<String>? = null)
 data class PromptReply(val password: CharArray? = null, val remember: Boolean = false, val choice: Int = -2)
@@ -36,6 +37,7 @@ object Tasks {
     @Volatile var state: TaskState? = null; private set
     @Volatile var prompt: Prompt? = null; private set
     @Volatile var page: ArchivePage? = null; private set
+    @Volatile var openFailure: OpenFailure? = null; private set
     @Volatile var pageVersion = 0; private set
     @Volatile var records: List<TaskRecord> = emptyList(); private set
     @Volatile private var active: Job? = null
@@ -73,7 +75,7 @@ object Tasks {
         "list" -> "打开 ${job.sources.first().name}"; "extract" -> "解压 ${job.sources.first().name}"
         "test" -> "检查 ${job.sources.first().name}"; "zip" -> "打包 ${job.sources.size} 项"; "export" -> "导出结果"; else -> job.kind
     }
-    fun cancel() { cancelled.set(true); future?.complete(PromptReply()); publish() }
+    fun cancel() { cancelled.set(true); state = state?.copy(phase = "正在取消…"); future?.complete(PromptReply()); publish() }
     fun reply(id: String, reply: PromptReply) {
         if (prompt?.id == id) { if (future?.complete(reply) != true) reply.password?.fill('\u0000') }
         else reply.password?.fill('\u0000')
@@ -199,6 +201,7 @@ object Tasks {
                 if (output != null) detail += "\n结果目录：${output!!.absolutePath}"
                 if (warnings.isNotEmpty()) detail += "\n" + warnings.distinct().joinToString("\n")
                 val record = TaskRecord(UUID.randomUUID().toString(), title(job), System.currentTimeMillis(), code, detail.trim().take(65000), output?.absolutePath)
+                if (job.kind == "list" && code in listOf(3, 8)) openFailure = OpenFailure(record.id, job.sources.first())
                 records = (listOf(record) + records).take(50); saveRecords()
                 prompt = null
                 main.post {

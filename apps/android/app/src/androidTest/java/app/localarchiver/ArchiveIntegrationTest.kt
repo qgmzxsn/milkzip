@@ -65,7 +65,7 @@ class ArchiveIntegrationTest {
         assertEquals(10, extract(File(dir, names.first()), "missing").getInt("code"))
     }
     @Test fun nativeLz4AndCompressedStreams() {
-        for (name in listOf("linked.lz4", "legacy.lz4", "payload.gz", "payload.bz2", "payload.xz", "payload.tar.gz")) {
+        for (name in listOf("linked.lz4", "legacy.lz4", "payload.gz", "payload.bz2", "payload.xz", "payload.tar.gz", "payload.lzma", "payload.zst", "payload.Z", "rar5.rar", "carrier.mp4")) {
             val file = fixture(name); val json = extract(file, "out-$name")
             assertEquals("$name: $json", 0, json.getInt("code"))
             assertTrue(File(dir, "out-$name").walkTopDown().any { it.isFile && it.length() > 0 })
@@ -100,6 +100,12 @@ class ArchiveIntegrationTest {
         val cancelled = File(dir, "cancelled.zip")
         try { ZipCreator(storage).create(listOf(storage.fromFile(source)), cancelled, { true }) { _, _, _ -> }; fail("must cancel") }
         catch (_: java.util.concurrent.CancellationException) { assertFalse(cancelled.exists()) }
+    }
+    @Test fun applicationContainersRemainFilesDuringRecursion() {
+        val result = extract(fixture("documents.zip"), "documents")
+        assertEquals(result.toString(), 0, result.getInt("code"))
+        assertTrue(File(dir, "documents/keep.docx").isFile)
+        assertFalse(File(dir, "documents").walkTopDown().any { it.name == "document.xml" })
     }
     @Test fun passwordBookEncryptedPersistenceAndOrder() {
         val book = PasswordBook(context); val old = book.read()

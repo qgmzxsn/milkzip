@@ -286,10 +286,10 @@ class MainActivity : Activity() {
         AlertDialog.Builder(this).setTitle("排序方式").setItems(labels) { _, i -> sort = arrayOf("name", "size", "date")[i]; prefs.edit().putString("sort", sort).apply(); render() }.show()
     }
     private fun fileMenu(node: Node) {
-        AlertDialog.Builder(this).setTitle(node.name).setItems(arrayOf("打开压缩包", "解压", "检查完整性", "选择 / 多选打包", "文件信息", "分享文件")) { _, i -> when (i) {
+        AlertDialog.Builder(this).setTitle(node.name).setItems(arrayOf("打开压缩包", "解压", "检查完整性", "选择 / 多选打包", "文件信息", "分享文件", "用其他应用打开")) { _, i -> when (i) {
             0 -> listArchive(node, files); 1 -> if (node.directory) notify("请选择压缩包文件") else extractDialog(node, files)
             2 -> if (node.directory) notify("请选择压缩包文件") else submit(Job("test", listOf(node), files), true)
-            3 -> { selected.add(node.location); render() }; 4 -> nodeInfo(node); 5 -> if (node.directory) notify("文件夹可以先打包为 ZIP") else share(node)
+            3 -> { selected.add(node.location); render() }; 4 -> nodeInfo(node); 5 -> if (node.directory) notify("文件夹可以先打包为 ZIP") else share(node); 6 -> if (!node.directory) openWith(node)
         } }.show()
     }
     private fun mainMenu() {
@@ -501,7 +501,13 @@ class MainActivity : Activity() {
             latestRecord = latest?.id
             if (tab == 1) render()
             if (tab == 2 && !passwordDirty) loadPasswords()
-            if (latest != null && resumed) notify(Rules.resultLabel(latest.code) + " · " + latest.title)
+            if (latest != null && resumed) {
+                notify(Rules.resultLabel(latest.code) + " · " + latest.title)
+                Tasks.openFailure?.takeIf { it.recordId == latest.id }?.let { failure ->
+                    AlertDialog.Builder(this).setTitle("无法按压缩包打开").setMessage("${failure.source.name}\n可能是普通文件，或使用了尚不支持的压缩格式。")
+                        .setPositiveButton("用其他应用打开") { _, _ -> openWith(failure.source) }.setNeutralButton("查看报告") { _, _ -> report(latest) }.setNegativeButton("关闭", null).show()
+                }
+            }
         }
         updateTaskViews(); showPrompt()
     }
@@ -524,7 +530,7 @@ class MainActivity : Activity() {
         if (p.branches != null) {
             var choice = 0
             promptDialog = AlertDialog.Builder(this).setTitle("继续解开哪些文件？")
-                .setSingleChoiceItems(p.branches.toTypedArray(), 0) { _, i -> choice = i }
+                .setSingleChoiceItems(p.branches.map { File(it).name }.toTypedArray(), 0) { _, i -> choice = i }
                 .setPositiveButton("解开所选") { _, _ -> Tasks.reply(p.id, PromptReply(choice = choice)) }
                 .setNeutralButton("全部解开") { _, _ -> Tasks.reply(p.id, PromptReply(choice = -3)) }
                 .setNegativeButton("到这一层结束") { _, _ -> Tasks.reply(p.id, PromptReply(choice = -1)) }
@@ -613,6 +619,16 @@ class MainActivity : Activity() {
             runOnUiThread { result.fold({ file ->
                 val uri = FileProvider.getUriForFile(this, "$packageName.files", file)
                 runCatching { startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("application/octet-stream").putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "分享文件")) }.onFailure(::failure)
+            }, ::failure) }
+        }
+    }
+    private fun openWith(node: Node) {
+        io.execute {
+            val result = runCatching { storage.shareCopy(node) }
+            runOnUiThread { result.fold({ file ->
+                val uri = FileProvider.getUriForFile(this, "$packageName.files", file)
+                val type = java.net.URLConnection.guessContentTypeFromName(node.name) ?: "application/octet-stream"
+                runCatching { startActivity(Intent.createChooser(Intent(Intent.ACTION_VIEW).setDataAndType(uri, type).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "打开文件")) }.onFailure(::failure)
             }, ::failure) }
         }
     }
