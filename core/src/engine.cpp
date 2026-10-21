@@ -641,6 +641,7 @@ struct ExtractCtx {
   ArchiverProgressCallback progress = nullptr;
   void *progress_user = nullptr;
   bool cancelled = false;
+  bool testing = false;
 
   bool report_progress() {
     if (cancelled) return false;
@@ -782,7 +783,8 @@ Z7_COM7F_IMF(ExtractCallback::SetTotal(UInt64 total)) {
   ctx->total = total;
   return ctx->report_progress() ? S_OK : E_ABORT;
 }
-Z7_COM7F_IMF(ExtractCallback::SetCompleted(const UInt64 * /*completeValue*/)) {
+Z7_COM7F_IMF(ExtractCallback::SetCompleted(const UInt64 *completeValue)) {
+  if (ctx && ctx->testing && completeValue) ctx->written = *completeValue;
   return ctx && ctx->report_progress() ? S_OK : E_ABORT;
 }
 
@@ -2539,8 +2541,13 @@ ArchiverResult archiver_open_with_passwords(const char *archive_path, const char
 }
 
 ArchiverResult archiver_test(ArchiverArchive *archive, const char *password) {
+  return archiver_test_with_progress(archive, password, nullptr, nullptr);
+}
+
+ArchiverResult archiver_test_with_progress(ArchiverArchive *archive, const char *password,
+    ArchiverProgressCallback progress, void *user) {
   if (!archive) return ARCHIVER_ERR_ARGUMENT;
-  if (archive->native_lz4) return process_lz4(archive, nullptr, nullptr, nullptr);
+  if (archive->native_lz4) return process_lz4(archive, nullptr, progress, user);
   if (!archive->archive) {
     if (archive->message.empty()) archive->message = "archive is not open";
     return ARCHIVER_ERR_FORMAT;
@@ -2555,6 +2562,10 @@ ArchiverResult archiver_test(ArchiverArchive *archive, const char *password) {
   ExtractCtx ctx;
   ctx.password = &pw;
   ctx.message = &archive->message;
+  ctx.progress = progress;
+  ctx.progress_user = user;
+  ctx.testing = true;
+  if (!ctx.report_progress()) return ARCHIVER_ERR_CANCELLED;
   ExtractCallback *callback = new ExtractCallback();
   callback->archive = archive->archive;
   callback->ctx = &ctx;
