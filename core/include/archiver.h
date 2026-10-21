@@ -21,7 +21,7 @@ extern "C" {
 #  define ARCHIVER_API __attribute__((visibility("default")))
 #endif
 
-#define ARCHIVER_VERSION "0.5.1"
+#define ARCHIVER_VERSION "0.6.0"
 
 typedef enum ArchiverResult {
   ARCHIVER_OK = 0,
@@ -36,7 +36,8 @@ typedef enum ArchiverResult {
   ARCHIVER_ERR_CANCELLED = 9,
   ARCHIVER_ERR_MISSING_VOLUME = 10,
   ARCHIVER_ERR_NEED_CHOICE = 11,
-  ARCHIVER_ERR_LIMIT = 12
+  ARCHIVER_ERR_LIMIT = 12,
+  ARCHIVER_ERR_PARTIAL = 13 /* some independent branches completed, others failed */
 } ArchiverResult;
 
 typedef struct ArchiverArchive ArchiverArchive;
@@ -140,12 +141,17 @@ typedef struct ArchiverNestedOptions {
   uint32_t max_depth;          /* 1..32; reaching this chosen depth is success */
   uint64_t max_output_bytes;   /* cumulative across layers, 0 = 64 GiB */
   int keep_intermediate;      /* original input is always kept */
-  int all_branches;           /* multiple archives get separate .unpacked folders */
+  int all_branches;           /* independent branches continue after recoverable errors;
+                                multiple archives get separate .unpacked folders */
   ArchiverNestedChoose choose;
   ArchiverNestedPassword password;
   void (*password_accepted)(const char *password, void *user); /* verified; do not log */
   void *user;
 } ArchiverNestedOptions;
+/* message_buf includes completed archive paths and failed branch details.
+   Cancellation, unsafe paths, engine errors and global limits stop immediately.
+   Known document/application containers are preserved during automatic recursion;
+   explicitly opening one still allows extraction. */
 ARCHIVER_API ArchiverResult archiver_extract_nested_ex(
     const char *archive_path, const char *engine_path, const char *dest_dir,
     const char *const *passwords, uint32_t password_count,

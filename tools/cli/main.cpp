@@ -64,6 +64,9 @@ void print_result(ArchiverResult result, const ArchiverArchive *archive) {
     case ARCHIVER_ERR_FORMAT:
       std::cout << "打不开这个压缩包。\n";
       break;
+    case ARCHIVER_ERR_PARTIAL:
+      std::cout << "部分解压完成，以下分支未能全部解开。\n";
+      break;
     case ARCHIVER_ERR_ENGINE:
       std::cout << "找不到 7-Zip 动态库。\n";
       break;

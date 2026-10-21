@@ -1,48 +1,29 @@
 # Windows releases
 
-The supported release toolchain for 0.5.1 is Qt 6.8.3 and its matching MinGW-w64
-13.1 POSIX/SEH kit, with the official 7-Zip 26.04 x64 `7z.dll`.
+The v0.6.0 portable release uses the repository's `Windows offline build`
+workflow: Windows Server 2022, MSVC 2022 x64, Qt 6.8.3, the pinned 7-Zip 26.04
+source and the vendored LZ4 1.10.0 library. No build tool is required by users.
 
-Keep build dependencies outside Git. The native script downloads the pinned
-7-Zip interface source if missing and validates its SHA-256. It requires CMake,
-Windows tar, and the supplied Qt/compiler folders. Python/JDK are only developer
-test tools, not end-user runtime dependencies.
+1. Update CMake, `ARCHIVER_VERSION`, the Android version name, package metadata,
+   workflow artifact names and README download links together.
+2. Run the Windows workflow on the intended PR head. Require all core, Qt GUI
+   and Windows Credential Manager tests, staged engine smoke test and deployed
+   GUI startup to pass. The package includes its Qt/MSVC runtime and licenses.
+3. Download the workflow artifact and verify ZIP integrity, required files,
+   embedded application version and `SHA256SUMS.txt` against the portable ZIP.
+4. Merge with the expected PR head. Verify that the merge commit's tree matches
+   the tested head, then tag the merge commit `v0.6.0`.
+5. Create a draft GitHub Release with these verified assets:
+   - `milkzip-0.6.0-windows-x64-portable.zip`
+   - `SHA256SUMS.txt` (SHA256 followed by the file name)
+6. Publish the release as Latest. Check the public release, tag commit, README
+   links and unauthenticated downloads, including a fresh checksum comparison.
 
-```powershell
-./scripts/build-windows-native.ps1 -QtDir C:/deps/Qt `
-  -CompilerDir C:/deps/mingw1310_64 -SevenZipDll C:/deps/7zip/7z.dll
+GitHub generates source ZIP/tar archives from the tag. They are source snapshots,
+not Windows applications. The application and its bundled guide must both report
+0.6.0; do not rename an older binary to make a new version's release package.
 
-py scripts/package-windows.py --build-dir build-windows-qt `
-  --qt-dir C:/deps/Qt --compiler-dir C:/deps/mingw1310_64 `
-  --sevenzip-dll C:/deps/7zip/7z.dll --output-dir C:/releases/0.5.1 `
-  --makensis C:/deps/nsis/makensis.exe
-```
-
-Before packaging, retain the license collection under `LICENSES/Qt`. The package
-script copies these notices, the matching toolchain license files, Qt SPDX
-documents, and the independent runtime DLLs. The stage directory must be new.
-
-The script produces:
-
-- `milkzip-0.5.1-windows-x64-setup.exe`: per-user installation, Start menu
-  shortcuts and an uninstall entry, without administrator access.
-- `milkzip-0.5.1-windows-x64-portable.zip`: extract the entire folder and run
-  `milkzip.exe`.
-- `milkzip-0.5.1-source.zip`: current source, including uncommitted edits;
-  no build outputs, compiler, downloaded 7-Zip source or private Git metadata.
-- `milkzip-0.5.1-SHA256SUMS.txt`: binary/source asset hashes.
-
-Installer testing can use `/S /NOINTEGRATION /D=C:\test-directory`. This installs
-files without Start menu or registry integration. The normal interactive
-installer does include integration. Uninstall removes only package-owned files;
-it never recursively deletes the installation directory or extracted user files.
-
-On GitHub, keep the source in the repository, tag the verified commit, then create
-a Release and attach these binaries, source ZIP and hashes. GitHub also generates
-`Source code (zip)`/`Source code (tar.gz)` from the tag automatically. Those are
-source snapshots, not compiled applications. The build and package scripts do
-not upload anything automatically. Publish only after verifying that the source
-ZIP matches the tagged commit and the SHA-256 manifest matches all three assets.
-
-For 0.5.1, use tag `v0.5.1` and attach the four files listed above to
-<https://github.com/qgmzxsn/milkzip/releases/tag/v0.5.1>.
+`scripts/build-windows-native.ps1`, `scripts/package-windows.py` and
+`installer.nsi` retain an alternate MinGW/NSIS packaging route. That route needs
+the matching Qt/MinGW kit and its notices and is separate from the MSVC portable
+release. v0.6.0 does not claim a validated installer, macOS package or Android APK.

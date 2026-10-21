@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(milkzip VERSION 0.5.1 LANGUAGES CXX)
+project(milkzip VERSION 0.6.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -24,11 +24,20 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
+add_library(archiver_lz4 STATIC
+  third_party/lz4/lz4.c third_party/lz4/lz4frame.c
+  third_party/lz4/lz4hc.c third_party/lz4/xxhash.c)
+target_include_directories(archiver_lz4 PUBLIC third_party/lz4)
+set_target_properties(archiver_lz4 PROPERTIES POSITION_INDEPENDENT_CODE ON
+  C_VISIBILITY_PRESET hidden)
+
 add_library(archiver SHARED
   core/src/path_safety.cpp
   core/src/safe_write.cpp
   core/src/engine.cpp
+  core/src/lz4_stream.cpp
 )
+target_link_libraries(archiver PRIVATE archiver_lz4)
 target_include_directories(archiver
   PUBLIC core/include
   PRIVATE ${SEVENZIP_SRC}/CPP
@@ -127,6 +136,9 @@ if(NOT ANDROID AND NOT CMAKE_CROSSCOMPILING)
     add_test(NAME disguised_archives
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/test_disguise.py"
               $<TARGET_FILE:archiver-cli> "${ARCHIVER_TEST_ENGINE}")
+    add_test(NAME format_detection
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/test_formats.py"
+              $<TARGET_FILE:archiver> "${ARCHIVER_TEST_ENGINE}" ${test_7z_args})
     if(ARCHIVER_TEST_7Z)
       add_test(NAME product_workflows
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/test_product.py"

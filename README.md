@@ -2,13 +2,23 @@
 
 离线打开、浏览和解压本机压缩包的 Windows 桌面程序。文件和密码都在本机处理，无需账号，不上传文件，也不会运行解压出的程序。
 
-当前版本：[**v0.5.1**](https://github.com/qgmzxsn/milkzip/releases/tag/v0.5.1)。
+当前版本：[**v0.6.0**](https://github.com/qgmzxsn/milkzip/releases/tag/v0.6.0)。
 
-[**下载 Windows 64 位便携版**](https://github.com/qgmzxsn/milkzip/releases/download/v0.5.1/milkzip-0.5.1-windows-x64-portable.zip) · [校验文件](https://github.com/qgmzxsn/milkzip/releases/download/v0.5.1/SHA256SUMS.txt)
+[**下载 Windows 64 位便携版**](https://github.com/qgmzxsn/milkzip/releases/download/v0.6.0/milkzip-0.6.0-windows-x64-portable.zip) · [校验文件](https://github.com/qgmzxsn/milkzip/releases/download/v0.6.0/SHA256SUMS.txt)
 
 完整解压 ZIP 后运行 `milkzip.exe`，保留旁边所有 DLL、platforms 和许可文件。无需另装 Qt 或 7-Zip。v0.3.0 保留在历史发行版中。
 
 ![Windows 实际界面](docs/screenshots/main-window.png)
+
+## v0.6.0 格式兼容改进
+
+- 按内容识别已支持格式；`.txt`、`.bin`、无后缀和错误后缀的压缩包无需改名。普通文本保持为普通文件。
+- 内置 LZ4 1.10.0 解码，读取标准帧、旧版帧、串联帧、可跳过帧及 tar.lz4；支持校验、取消和实际输出量限制。无需另装 LZ4 程序。
+- 接通 7-Zip 已有的独立 LZMA 和 Unix compress（`.Z`）处理器。
+- 内层扫描使用同一套内容识别，媒体附加包的探测范围与单独打开一致。附加包搜索读取开头 8 MiB 和末尾 32 MiB；ZIP 还查找末尾 1 MiB 中的目录结束记录。归档起点完全落在这些范围外的载体仍可能无法识别。
+- 自动递归保留 Office/OpenDocument 文档、EPUB、JAR/APK 等成品容器；显式打开这些文件仍可解压。无后缀的压缩流没有原始文件名时，输出名使用 `.out`，以免与内层源文件冲突。
+- “全部分支”模式下，损坏、缺卷、暂不支持或缺少密码的内层包保留，并继续处理其他独立分支。部分成功会明确提示；“工具 → 上次解压结果”可查看清单。主动取消、路径安全错误、引擎错误和累计资源上限仍立即停止。
+- C API 不改变选项结构；新增返回值 `ARCHIVER_ERR_PARTIAL`（13）。只有混合成功与失败的分支才返回部分成功；单个失败仍保留原错误码。
 
 ## 解压
 

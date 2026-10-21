@@ -222,21 +222,21 @@ def main():
         with open(zip_path, "rb") as src, open(renamed, "wb") as dst:
             dst.write(src.read())
         code, out, err = run(cli, ["list", renamed, "--engine", engine])
-        if code != RESULT["unsupported"]:
+        if code != 0:
             print(code, out, err, file=sys.stderr)
-            errors += fail("wrong extension should be unsupported in phase 1")
+            errors += fail("ZIP with an unknown extension should be detected by content")
         else:
-            print("ok wrong-extension rejected")
+            print("ok wrong-extension detected")
 
         split = os.path.join(tmp, "vol.7z.001")
         with open(zip_path, "rb") as src, open(split, "wb") as dst:
             dst.write(src.read())
         code, out, err = run(cli, ["list", split, "--engine", engine])
-        if code != RESULT["format"]:
+        if code != 0:
             print(code, out, err, file=sys.stderr)
-            errors += fail("a zip renamed to .7z.001 is not a 7z volume")
+            errors += fail("numeric volume names should preserve content detection")
         else:
-            print("ok misnamed 7z volume rejected")
+            print("ok misnamed numeric volume detected")
 
         slip = os.path.join(tmp, "slip.zip")
         with zipfile.ZipFile(slip, "w") as zf:

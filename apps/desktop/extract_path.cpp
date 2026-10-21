@@ -27,6 +27,7 @@ QString stripArchiveSuffix(QString name) {
       QStringLiteral(".webp"), QStringLiteral(".mkv"), QStringLiteral(".avi"),
       QStringLiteral(".webm"), QStringLiteral(".gz"), QStringLiteral(".bz2"),
       QStringLiteral(".xz"), QStringLiteral(".zst"), QStringLiteral(".zstd"),
+      QStringLiteral(".lz4"), QStringLiteral(".lzma"), QStringLiteral(".z"),
       QStringLiteral(".cab"), QStringLiteral(".iso"), QStringLiteral(".udf"),
       QStringLiteral(".wim"), QStringLiteral(".swm"), QStringLiteral(".arj"),
       QStringLiteral(".lzh"), QStringLiteral(".lha"), QStringLiteral(".cpio"),
