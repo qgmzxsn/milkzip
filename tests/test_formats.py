@@ -106,9 +106,22 @@ class FormatTests(unittest.TestCase):
                 self.assertEqual(code, 0, message); self.assert_payload(out)
                 self.assertFalse((out / name).exists())
 
+    def test_incorrect_compound_suffix_and_prefixed_payload(self):
+        for name, data in [('wrong.tar.gz', gzip.compress(PAYLOAD)),
+                           ('wrong.tar.bz2', bz2.compress(PAYLOAD)),
+                           ('wrong.tar.xz', lzma.compress(PAYLOAD))]:
+            code, message, out = self.extract(name, data)
+            self.assertEqual(code, 0, message); self.assert_payload(out)
+        payload = b'MZ' + b'\0' * 128 + zipped({'hello.txt': PAYLOAD})
+        for name in ['wrong.7z', 'wrong.gz', 'wrong.lz4']:
+            code, message, out = self.extract(name, payload)
+            self.assertEqual(code, 0, message); self.assert_payload(out)
+        code, message, out = self.extract('empty.txt', zipped({}))
+        self.assertEqual(code, 0, message); self.assertEqual(list(out.iterdir()), [])
+
     def test_lz4_linked_checksums_and_legacy(self):
         for filename in ['linked.lz4', 'legacy.lz4']:
-            for name in ['data.lz4', 'data.txt', 'data']:
+            for name in ['data.lz4', 'data.txt', 'data', '中文😀.lz4']:
                 with self.subTest(fixture=filename, name=name):
                     code, message, out = self.extract(name, (FIXTURES / filename).read_bytes())
                     self.assertEqual(code, 0, message); self.assert_payload(out, LZ4_PAYLOAD)
@@ -124,6 +137,8 @@ class FormatTests(unittest.TestCase):
         data = (FIXTURES / 'legacy.lz4').read_bytes() + lz4_raw(PAYLOAD)
         code, message, out = self.extract('concat.lz4', data)
         self.assertEqual(code, 0, message); self.assert_payload(out, LZ4_PAYLOAD + PAYLOAD)
+        code, message, out = self.extract('linux.lz4', (FIXTURES / 'legacy.lz4').read_bytes() + b'\0' * 4)
+        self.assertEqual(code, 0, message); self.assert_payload(out, LZ4_PAYLOAD)
 
     def test_lz4_corruption_test_and_cleanup(self):
         original = (FIXTURES / 'linked.lz4').read_bytes()
@@ -172,6 +187,14 @@ class FormatTests(unittest.TestCase):
         self.assertEqual(code, 8, message); self.assertEqual(list(out.iterdir()), [])
         code, message, out = self.extract('outer.zip', zipped({'note.txt': b'plain text'}))
         self.assertEqual(code, 0, message); self.assertEqual((out / 'note.txt').read_bytes(), b'plain text')
+
+    def test_failures_remain_visible_after_a_long_success_report(self):
+        members = {f'{i:03d}-' + 'x' * 100 + '.zip': zipped({'hello.txt': PAYLOAD}) for i in range(140)}
+        members['z-failure.zip'] = b'not zip'
+        code, message, out = self.extract('outer.zip', zipped(members))
+        self.assertEqual(code, 13, message)
+        self.assertIn('z-failure.zip', message[:1024])
+        self.assertTrue((out / 'z-failure.zip').exists())
 
     @unittest.skipUnless(SEVEN, '7-Zip fixture encoder unavailable')
     def test_large_appended_archive_matches_top_level_detection(self):

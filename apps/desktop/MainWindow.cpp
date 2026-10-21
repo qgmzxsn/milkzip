@@ -1138,6 +1138,8 @@ void MainWindow::startExtract(const QString &sourcePath, const QString &dest, bo
     watcher->deleteLater();
     setBusy(false);
     lastExtractReport_ = QStringLiteral("输出位置：%1\n").arg(QDir::toNativeSeparators(dest)) + result.detail;
+    lastExtractReport_.replace(QStringLiteral("archives extracted: "), QStringLiteral("已解开的包数："));
+    lastExtractReport_.replace(QStringLiteral("failed branch reports: "), QStringLiteral("未完成分支记录数："));
     lastExtractReport_.replace(QStringLiteral("extracted: "), QStringLiteral("已解开："));
     lastExtractReport_.replace(QStringLiteral("kept container: "), QStringLiteral("保留成品文件："));
     lastExtractReport_.replace(QStringLiteral("failed [format]: "), QStringLiteral("未解开（损坏或不完整）："));
@@ -1216,7 +1218,7 @@ void MainWindow::startExtract(const QString &sourcePath, const QString &dest, bo
       else {
         const QByteArray pathBytes = path.toUtf8();
         const QByteArray destBytes = dest.toUtf8();
-        char message[4096] = {};
+        char message[65536] = {};
         ArchiverNestedOptions options = {};
         options.max_depth = static_cast<uint32_t>(depth);
         options.max_output_bytes = byteLimit;

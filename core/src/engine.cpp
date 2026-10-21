@@ -2161,6 +2161,7 @@ ArchiverResult open_archive_impl(const char *input_path, const char *engine_path
       (hint == Kind::TarXz && detected == Kind::Xz) ||
       (hint == Kind::TarZst && detected == Kind::Zstd) ||
       (hint == Kind::Udf && detected == Kind::Iso)) kind = hint;
+  if (kind == Kind::Lz4 && detected != Kind::Lz4) kind = Kind::Unsupported;
   const bool disguise = kind == Kind::Unsupported;
 
   std::unique_ptr<ArchiverArchive> archive(new ArchiverArchive());
@@ -2224,9 +2225,14 @@ ArchiverResult open_archive_impl(const char *input_path, const char *engine_path
         } else {
           result = open_with(archive->engine, tar_id, archive->temp_dir + "/inner.bin", pw,
                              archive->archive, archive->stream, archive->message);
-          if (result != ARCHIVER_OK && archive->message.find("password") == std::string::npos) {
-            archive->message = "inner stream is not a tar archive";
-            result = ARCHIVER_ERR_FORMAT;
+          if (result == ARCHIVER_ERR_FORMAT) {
+            // A compound extension is still only a hint. A valid plain gzip
+            // renamed to .tar.gz must remain readable as a single stream.
+            archive->message.clear();
+            archive->fallback_name = "content";
+            const Kind compression = kind == Kind::TarGz ? Kind::Gzip :
+                kind == Kind::TarBz2 ? Kind::Bzip2 : kind == Kind::TarXz ? Kind::Xz : Kind::Zstd;
+            result = open_kind(archive.get(), compression, archive_path, pw);
           }
         }
       }
@@ -2235,6 +2241,14 @@ ArchiverResult open_archive_impl(const char *input_path, const char *engine_path
     result = open_numeric_volume(archive.get(), kind, archive_path, pw);
   } else {
     result = open_kind(archive.get(), kind, archive_path, pw, &archive->volumes);
+  }
+
+  if (!disguise && (result == ARCHIVER_ERR_FORMAT || result == ARCHIVER_ERR_UNSUPPORTED)) {
+    const ArchiverResult original = result;
+    const std::string detail = archive->message;
+    close_open_archive(archive.get());
+    result = open_disguised(archive.get(), archive_path, pw, scan_window);
+    if (result == ARCHIVER_ERR_UNSUPPORTED) { result = original; archive->message = detail; }
   }
 
   if (result == ARCHIVER_OK && archive->entries.empty()) {
@@ -2705,8 +2719,14 @@ struct NestedBudget {
   uint32_t files = 0;
   std::vector<std::string> secrets;
   std::string report;
+  std::string failures;
+  uint32_t completed_archives = 0, failed_branches = 0;
   void record(const std::string &line) {
-    if (report.size() + line.size() + 1 <= 16384) report += line + "\n";
+    const bool failed = line.compare(0, 8, "failed [") == 0;
+    if (failed) ++failed_branches;
+    else if (line.compare(0, 11, "extracted: ") == 0) ++completed_archives;
+    std::string &target = failed ? failures : report;
+    if (target.size() + line.size() + 1 <= 16384) target += line + "\n";
   }
   ~NestedBudget() { for (auto &secret : secrets) wipe_string(secret); }
 };
@@ -2974,7 +2994,11 @@ ArchiverResult archiver_extract_nested_ex(const char *archive_path, const char *
   std::string message;
   ArchiverResult result = nested_extract(archive_path, engine_path, dest_dir, passwords, password_count,
       nullptr, budget, progress, progress_user, message, options);
-  if (!budget.report.empty()) message = budget.report + (message.empty() ? "" : "detail: " + message);
+  if (!budget.report.empty() || !budget.failures.empty()) {
+    message = "archives extracted: " + std::to_string(budget.completed_archives) +
+        "\nfailed branch reports: " + std::to_string(budget.failed_branches) + "\n" +
+        budget.failures + (message.empty() ? "" : "detail: " + message + "\n") + budget.report;
+  }
   copy_message(message_buf, message_cap, message);
   return result;
 }
