@@ -21,7 +21,7 @@ extern "C" {
 #  define ARCHIVER_API __attribute__((visibility("default")))
 #endif
 
-#define ARCHIVER_VERSION "0.5.1"
+#define ARCHIVER_VERSION "0.6.0"
 
 typedef enum ArchiverResult {
   ARCHIVER_OK = 0,

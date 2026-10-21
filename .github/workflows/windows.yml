@@ -51,7 +51,7 @@ jobs:
         shell: pwsh
         run: |
           $qt = "$env:RUNNER_TEMP/Qt/6.8.3/msvc2022_64"
-          $stage = "$env:GITHUB_WORKSPACE/dist/milkzip-0.5.1-windows-x64"
+          $stage = "$env:GITHUB_WORKSPACE/dist/milkzip-0.6.0-windows-x64"
           New-Item -ItemType Directory -Path $stage -Force | Out-Null
           Copy-Item build/milkzip.exe,build/archiver.dll $stage
           Copy-Item third_party/7zip/src/CPP/7zip/Bundles/Format7zF/x64/7z.dll $stage
@@ -77,12 +77,15 @@ jobs:
           if ($process.HasExited) { throw "Staged GUI exited: $($process.ExitCode)" }
           Stop-Process -Id $process.Id
           Remove-Item "$stage/archiver-cli.exe",$smoke
-          Compress-Archive -Path $stage -DestinationPath dist/milkzip-0.5.1-windows-x64-portable.zip
-          (Get-FileHash dist/*.zip -Algorithm SHA256).Hash | Set-Content dist/SHA256SUMS.txt
+          Compress-Archive -Path $stage -DestinationPath dist/milkzip-0.6.0-windows-x64-portable.zip
+          Get-ChildItem dist/*.zip | ForEach-Object {
+            $checksum = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$checksum  $($_.Name)"
+          } | Set-Content dist/SHA256SUMS.txt -Encoding ascii
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: milkzip-0.5.1-windows
+          name: milkzip-0.6.0-windows
           path: |
             dist/*.zip
             dist/SHA256SUMS.txt
