@@ -57,3 +57,19 @@ dependencies {
     androidTestImplementation("androidx.test:rules:1.6.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
 }
+
+// Keep build state in this checkout, including on machines where HOME is read-only.
+val prepareDebugKeystore by tasks.registering(Exec::class) {
+    val key = file("../.local/debug.keystore")
+    outputs.file(key)
+    onlyIf { !key.exists() }
+    doFirst { key.parentFile.mkdirs() }
+    val suffix = if (System.getProperty("os.name").startsWith("Windows")) ".exe" else ""
+    commandLine("${System.getProperty("java.home")}/bin/keytool$suffix", "-genkeypair",
+        "-keystore", key.absolutePath, "-storepass", "android", "-keypass", "android",
+        "-alias", "androiddebugkey", "-keyalg", "RSA", "-keysize", "3072",
+        "-validity", "10000", "-dname", "CN=MilkZip Android Debug,O=MilkZip,C=CN")
+}
+tasks.configureEach {
+    if (name.startsWith("validateSigningDebug")) dependsOn(prepareDebugKeystore)
+}

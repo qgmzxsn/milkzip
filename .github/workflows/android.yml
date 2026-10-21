@@ -36,6 +36,11 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
         run: sh scripts/build-android.sh
+      - uses: actions/cache/save@v4
+        if: steps.native.outputs.cache-hit != 'true'
+        with:
+          path: build-android/jni-package
+          key: android-native-r27c-${{ hashFiles('scripts/build-android.sh', 'scripts/fetch-7zip.sh', 'CMakeLists.txt', 'core/**', 'apps/android/app/src/main/cpp/**', 'third_party/lz4/**') }}
       - uses: gradle/actions/setup-gradle@v4
       - name: Unit tests, lint and APK
         working-directory: apps/android
@@ -54,14 +59,7 @@ jobs:
           profile: pixel_6
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -memory 3072
-          script: |
-            cd apps/android && ./gradlew connectedDebugAndroidTest --stacktrace
-      - name: Collect screenshots and device logs
-        if: always()
-        run: |
-          mkdir -p android-artifacts
-          adb pull /sdcard/Android/data/app.localarchiver/files/screenshots android-artifacts/ || true
-          adb logcat -d > android-artifacts/logcat.txt || true
+          script: sh scripts/test-android-device.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -62,6 +62,8 @@ class MainActivity : Activity() {
     private var pendingName = ""
     private var externalSources = emptyList<Node>()
     private var loading = false
+    private data class Retained(val parents: List<Node>, val archive: ArchivePage?, val draft: List<String>, val dirty: Boolean, val query: String, val selected: Set<String>)
+    override fun onRetainNonConfigurationInstance(): Any = Retained(parents.toList(), archive, passwordDraft.toList(), passwordDirty, query, selected.toSet())
     private val dark get() = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
     private val bg get() = Color.parseColor(if (dark) "#141B18" else "#F7F9F6")
     private val surface get() = Color.parseColor(if (dark) "#202A24" else "#FFFFFF")
@@ -96,10 +98,12 @@ class MainActivity : Activity() {
         }
         if (folder == null) folder = storage.fromFile(if (storage.allFiles) File(storage.shared, "Download").takeIf { it.isDirectory } ?: storage.shared else storage.results)
         archive = Tasks.page
+        val retained = lastNonConfigurationInstance as? Retained
+        retained?.let { parents.addAll(it.parents); archive = it.archive; passwordDraft = it.draft.toMutableList(); passwordDirty = it.dirty; query = it.query; selected.addAll(it.selected) }
         pageVersion = Tasks.pageVersion
         latestRecord = Tasks.records.firstOrNull()?.id
         buildShell()
-        if (tab == 2) loadPasswords() else render()
+        if (tab == 2 && retained == null) loadPasswords() else render()
         if (savedInstanceState == null) handleIntent(intent)
     }
     override fun onSaveInstanceState(outState: Bundle) {
@@ -127,7 +131,11 @@ class MainActivity : Activity() {
         mini = text("", 13f, green).apply { setPadding(dp(20), dp(12), dp(20), dp(12)); background = rounded(tint, 0); setOnClickListener { switchTab(1) } }
         root.addView(mini)
         nav = row().apply { setPadding(dp(12), dp(8), dp(6), dp(8)); setBackgroundColor(surface) }
-        root.addView(nav); setContentView(root); renderNav()
+        root.addView(nav); setContentView(root)
+        WindowCompat.getInsetsController(window, root).isAppearanceLightNavigationBars = !dark
+        if (Build.VERSION.SDK_INT == 26) window.navigationBarColor = Color.parseColor("#397461")
+        if (Build.VERSION.SDK_INT >= 33) onBackInvokedDispatcher.registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT) { onBackPressed() }
+        renderNav()
     }
     private fun renderNav() {
         nav.removeAllViews()
@@ -302,12 +310,14 @@ class MainActivity : Activity() {
     private fun pickFiles() { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "*/*"; putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION) }, 101) }
     private fun pickTree(code: Int) { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION), code) }
     private fun persist(uri: Uri, data: Intent) {
-        runCatching { contentResolver.takePersistableUriPermission(uri, data.flags and (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)) }
+        val flags = if (data.flags and Intent.FLAG_GRANT_WRITE_URI_PERMISSION != 0)
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION else Intent.FLAG_GRANT_READ_URI_PERMISSION
+        runCatching { contentResolver.takePersistableUriPermission(uri, flags) }
     }
     @Deprecated("Deprecated in Java") override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == 105) { if (storage.allFiles) navigate(storage.fromFile(storage.shared)); return }
-        if (resultCode != RESULT_OK || data == null) return
+        if (resultCode != RESULT_OK || data == null) { if (requestCode == 103) pendingExtract = null; return }
         when (requestCode) {
             101 -> {
                 val uris = if (data.clipData != null) (0 until data.clipData!!.itemCount).map { data.clipData!!.getItemAt(it).uri } else listOfNotNull(data.data)
@@ -490,6 +500,7 @@ class MainActivity : Activity() {
         if (latest?.id != latestRecord) {
             latestRecord = latest?.id
             if (tab == 1) render()
+            if (tab == 2 && !passwordDirty) loadPasswords()
             if (latest != null && resumed) notify(Rules.resultLabel(latest.code) + " · " + latest.title)
         }
         updateTaskViews(); showPrompt()

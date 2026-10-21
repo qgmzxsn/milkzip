@@ -63,7 +63,7 @@ object Tasks {
     internal fun submit(job: Job): Boolean {
         init(context)
         if (active != null) return false
-        active = job; cancelled.set(false); page = null; warnings.clear()
+        active = job; cancelled.set(false); if (job.kind == "list") page = null; warnings.clear()
         state = TaskState(title(job), "准备中"); publish()
         try { ContextCompat.startForegroundService(context, Intent(context, TaskService::class.java)) }
         catch (error: Exception) { active = null; state = null; publish(); throw error }
@@ -200,8 +200,11 @@ object Tasks {
                 if (warnings.isNotEmpty()) detail += "\n" + warnings.distinct().joinToString("\n")
                 val record = TaskRecord(UUID.randomUUID().toString(), title(job), System.currentTimeMillis(), code, detail.trim().take(65000), output?.absolutePath)
                 records = (listOf(record) + records).take(50); saveRecords()
-                prompt = null; active = null; state = null; running = false; publish()
-                main.post { onFinish(record) }
+                prompt = null
+                main.post {
+                    active = null; state = null; running = false
+                    onFinish(record); publish()
+                }
             }
         }
     }
@@ -212,12 +215,17 @@ class TaskService : Service() {
     private var wake: PowerManager.WakeLock? = null
     private var lastUpdate = 0L
     private val observer: () -> Unit = { if (SystemClock.elapsedRealtime() - lastUpdate > 750 || Tasks.state?.waiting == true) {
-        lastUpdate = SystemClock.elapsedRealtime(); (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(1, notification())
+        lastUpdate = SystemClock.elapsedRealtime(); notifyIfAllowed(1, notification())
     } }
     override fun onCreate() {
         super.onCreate(); Tasks.init(this)
         (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(NotificationChannel(channel, "压缩任务", NotificationManager.IMPORTANCE_LOW))
         Tasks.listeners.add(observer)
+    }
+    private fun notifyIfAllowed(id: Int, notification: Notification) {
+        if (Build.VERSION.SDK_INT < 33 || checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(id, notification)
+        }
     }
     private fun notification(record: TaskRecord? = null): Notification {
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java).putExtra("tasks", true), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
@@ -238,7 +246,7 @@ class TaskService : Service() {
         wake = (getSystemService(POWER_SERVICE) as PowerManager).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MilkZip:archive").apply { acquire(TimeUnit.HOURS.toMillis(6)) }
         Tasks.execute { record ->
             stopForeground(STOP_FOREGROUND_REMOVE)
-            if (record != null) (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(2, notification(record))
+            if (record != null) notifyIfAllowed(2, notification(record))
             stopSelf()
         }
         return START_NOT_STICKY
