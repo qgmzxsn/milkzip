@@ -46,6 +46,6 @@ cd apps/android
 
 输出：`app/build/outputs/apk/debug/app-debug.apk`。Gradle Wrapper 固定 8.9 并校验官方 SHA-256；AGP 8.7.3、Kotlin 2.0.21。本地 debug 签名保存在 `.local/debug.keystore`，不提交到 Git。生产发布必须保管并持续使用自己的发布签名。
 
-CI 同时在 Android 8.0 / Android 15 模拟器运行真实引擎及 UI 测试，产物包含 APK、测试报告、模拟器截图。测试不是实体手机兼容性保证；发布前仍应在真实手机验证外部 SD 卡、不同文件提供商和厂商后台限制。
+CI 同时在 Android 8.0 / Android 15 / Android 16 模拟器运行真实引擎及 UI 测试，产物包含 APK、测试报告、模拟器截图。测试不是实体手机兼容性保证；发布前仍应在真实手机验证外部 SD 卡、不同文件提供商和厂商后台限制。
 
 许可证放在 APK 的 `assets/licenses/` 中；7-Zip 独立动态库保持 LGPL 替换能力，源码和固定校验值见 `scripts/fetch-7zip.sh`。本地 Android 代码采用仓库 MIT 许可证。

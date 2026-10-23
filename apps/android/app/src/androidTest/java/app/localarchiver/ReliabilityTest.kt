@@ -91,11 +91,11 @@ class ReliabilityTest {
     @Test fun thirtyTwoLayer7zAndExecutableContainers() {
         val root = storage.jobDirectory()
         try {
-            for (name in listOf("deep-32.7z", "seven-sfx.exe", "nsis.exe")) {
+            for (name in listOf("deep-32.7z", "seven-sfx.exe", "nsis.exe", "cab-sfx.exe")) {
                 val file = fixture(name, root)
                 val result = invoke(root, file, File(root, "out-$name"))
                 assertEquals("$name: $result", 0, result.getInt("code"))
-                val final = File(root, "out-$name/${if (name == "nsis.exe") "nsis-payload.txt" else "deep-final.txt"}")
+                val final = File(root, "out-$name/${when (name) { "nsis.exe" -> "nsis-payload.txt"; "cab-sfx.exe" -> "cab-payload.txt"; else -> "deep-final.txt" }}")
                 assertTrue(final.path, final.isFile)
             }
         } finally { root.deleteRecursively() }

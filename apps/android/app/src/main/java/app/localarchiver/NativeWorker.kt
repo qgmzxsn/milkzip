@@ -51,8 +51,13 @@ internal object NativeWorker {
                 override fun onChoose(paths: Array<String>) = listener.onChoose(paths)
                 override fun onComplete(error: String) { if (error.isNotEmpty()) failure.compareAndSet(null, error); finished.countDown() }
             })
+            var cancelTime = 0L
             while (!finished.await(250, TimeUnit.MILLISECONDS)) {
-                if (cancelled()) service.cancel()
+                if (cancelled()) {
+                    if (cancelTime == 0L) { cancelTime = SystemClock.elapsedRealtime(); service.cancel() }
+                    // Some damaged decoders stop calling progress. Cancellation still releases the worker.
+                    if (pid > 0 && SystemClock.elapsedRealtime() - cancelTime > 5000) Process.killProcess(pid)
+                }
             }
             failure.get()?.let { message ->
                 val reason = if (Build.VERSION.SDK_INT >= 30 && pid > 0) runCatching {

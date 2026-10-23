@@ -131,9 +131,12 @@ class Storage(private val context: Context) {
     fun checkDeletable(node: Node) {
         if (node.isDocument) {
             val uri = Uri.parse(node.location)
-            require(DocumentsContract.isDocumentUri(context, uri)) { "此来源不支持删除，请授权所在文件夹后重试" }
+            // A granted tree already identifies a DocumentsProvider. Package visibility can make
+            // isDocumentUri() return false for a provider even when this URI grant works.
+            val id = try { DocumentsContract.getDocumentId(uri) }
+            catch (_: IllegalArgumentException) { throw IllegalArgumentException("此来源不支持删除，请授权所在文件夹后重试") }
             node.tree?.let { tree ->
-                require(DocumentsContract.getDocumentId(uri) != DocumentsContract.getTreeDocumentId(Uri.parse(tree))) { "不能删除已授权文件夹的根目录" }
+                require(uri.authority == Uri.parse(tree).authority && id != DocumentsContract.getTreeDocumentId(Uri.parse(tree))) { "不能删除已授权文件夹的根目录" }
             }
         } else {
             val input = node.file.toPath().toAbsolutePath().normalize()
