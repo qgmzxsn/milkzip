@@ -10,6 +10,15 @@ public class ArchiverNative {
     public native String listArchive(String archive, String engine, char[] password);
     public native String extractArchive(String archive, String dest, String engine, char[] password);
 
+    public native String nativeExtractNested(String archive, String dest, String engine, char[][] passwords,
+        int depth, long bytes, boolean keep, boolean ask, Object listener);
+    public static class Listener {
+        int calls;
+        public boolean onProgress(long done, long total) { calls++; return false; }
+        public char[] onPassword(String path, boolean rejected) { return null; }
+        public void onPasswordAccepted(char[] password) { }
+        public int onChoose(String[] paths) { return -3; }
+    }
     public static void main(String[] args) throws Exception {
         System.load(args[0]);
         System.load(args[1]);
@@ -43,6 +52,13 @@ public class ArchiverNative {
             dest + "-damaged", args[2], new char[]{'x'});
         if (!result.startsWith("format")) {
             throw new AssertionError("Unencrypted damage mislabeled as a password error: " + result);
+        }
+        Path threaded = Path.of(args[3], "threaded.7z");
+        if (Files.exists(threaded)) {
+            Listener listener = new Listener();
+            result = api.nativeExtractNested(threaded.toString(), dest + "-threaded", args[2], new char[0][],
+                32, 64L << 20, true, false, listener);
+            if (!result.contains("\"code\":0") || listener.calls == 0) throw new AssertionError(result);
         }
         System.out.println("JNI Unicode paths, listing, and password checks passed");
     }
