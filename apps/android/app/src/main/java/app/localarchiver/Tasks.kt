@@ -42,6 +42,7 @@ object Tasks {
     @Volatile var records: List<TaskRecord> = emptyList(); private set
     @Volatile private var active: Job? = null
     private val cancelled = AtomicBoolean(false)
+    private val promptsStopped = AtomicBoolean(true)
     @Volatile private var future: CompletableFuture<PromptReply>? = null
     private var running = false
     private var lastNotify = 0L
@@ -66,7 +67,7 @@ object Tasks {
     internal fun submit(job: Job): Boolean {
         init(context)
         if (active != null) return false
-        active = job; cancelled.set(false); warnings.clear()
+        active = job; cancelled.set(false); promptsStopped.set(false); warnings.clear()
         state = TaskState(title(job), "准备中"); publish()
         try { ContextCompat.startForegroundService(context, Intent(context, TaskService::class.java)) }
         catch (error: Exception) { active = null; state = null; publish(); throw error }
@@ -97,12 +98,12 @@ object Tasks {
         if (cancelled.get()) throw CancellationException()
     }
     private fun ask(request: Prompt): PromptReply {
-        if (cancelled.get()) return PromptReply()
+        if (cancelled.get() || promptsStopped.get()) return PromptReply()
         val answer = CompletableFuture<PromptReply>()
         future = answer; prompt = request
         state = state?.copy(waiting = true, phase = if (request.branches == null) "等待输入密码" else "等待选择内层压缩包"); publish()
         try {
-            while (!cancelled.get()) {
+            while (!cancelled.get() && !promptsStopped.get()) {
                 try { return answer.get(250, TimeUnit.MILLISECONDS) } catch (_: TimeoutException) { }
             }
             return PromptReply()
@@ -182,7 +183,7 @@ object Tasks {
                             arguments.putLong("bytes", minOf(job.settings.maxBytes, remaining))
                             arguments.putBoolean("keep", job.settings.keep); arguments.putBoolean("ask", job.settings.ask)
                         }
-                        val response = NativeWorker.run(context, arguments, passwords(), File(scratch, "native-response.json"), callbacks, cancelled::get) { future?.complete(PromptReply()) }
+                        val response = NativeWorker.run(context, arguments, passwords(), File(scratch, "native-response.json"), callbacks, cancelled::get) { promptsStopped.set(true); future?.complete(PromptReply()) }
                         val json = JSONObject(response); code = json.getInt("code"); detail = json.optString("detail")
                         if (code == 0 && job.kind == "list") {
                             val rows = json.getJSONArray("entries")
