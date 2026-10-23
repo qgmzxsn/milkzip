@@ -89,6 +89,28 @@ class ReliabilityTest {
             assertEquals(3000000L, File(root, "recovered/machine.bin").length())
         } finally { root.deleteRecursively() }
     }
+    @Test fun engineDeathWhileWaitingForPasswordRetiresPromptAndJob() {
+        val root = storage.jobDirectory()
+        fun waitFor(condition: () -> Boolean) {
+            val end = System.currentTimeMillis() + 15000
+            while (System.currentTimeMillis() < end) { if (condition()) return; Thread.sleep(50) }
+            fail("Task did not finish: ${Tasks.state}")
+        }
+        try {
+            val secret = fixture("secret.7z", root)
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                scenario.onActivity { assertTrue(Tasks.submit(Job("extract", listOf(storage.fromFile(secret)), parent = root, name = "interrupted-secret"))) }
+                waitFor { Tasks.prompt != null && NativeWorker.pid > 0 }
+                Process.killProcess(NativeWorker.pid)
+                waitFor { Tasks.state == null && Tasks.prompt == null }
+                assertEquals(4, Tasks.records.first().code)
+                val next = fixture("bcj2.7z", root)
+                scenario.onActivity { assertTrue(Tasks.submit(Job("test", listOf(storage.fromFile(next))))) }
+                waitFor { Tasks.state == null }
+                assertEquals(0, Tasks.records.first().code)
+            }
+        } finally { root.deleteRecursively() }
+    }
     @Test fun promptedPasswordCrossesProcessAndReplyIsWiped() {
         val root = storage.jobDirectory()
         val reply = "安卓 密码".toCharArray()

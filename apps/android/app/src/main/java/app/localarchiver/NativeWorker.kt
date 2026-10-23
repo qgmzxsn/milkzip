@@ -18,11 +18,19 @@ internal class NativeWorkerException(message: String) : IOException(message)
 /** Blocking worker-side client; all ServiceConnection callbacks remain on the main looper. */
 internal object NativeWorker {
     @Volatile var pid: Int = 0; private set
-    fun run(context: Context, arguments: Bundle, passwords: Array<CharArray>, response: File, listener: NativeCallbacks, cancelled: () -> Boolean = { false }): String {
+    fun run(context: Context, arguments: Bundle, passwords: Array<CharArray>, response: File, listener: NativeCallbacks, cancelled: () -> Boolean = { false }, onStopped: () -> Unit = {}): String {
         val connected = CountDownLatch(1); val finished = CountDownLatch(1)
         val remote = AtomicReference<INativeWorker?>()
         val failure = AtomicReference<String?>()
         val replies = ConcurrentLinkedQueue<CharArray>()
+        val gate = java.lang.Object()
+        var closed = false
+        var callbacks = 0
+        fun <T> callback(fallback: T, action: () -> T): T {
+            synchronized(gate) { if (closed) return fallback; callbacks++ }
+            try { return action() }
+            finally { synchronized(gate) { callbacks--; gate.notifyAll() } }
+        }
         var linked: IBinder? = null
         pid = 0
         fun died() { if (finished.count == 0L) return; failure.compareAndSet(null, "解压引擎意外退出"); connected.countDown(); finished.countDown() }
@@ -47,10 +55,10 @@ internal object NativeWorker {
             val service = remote.get() ?: throw NativeWorkerException(failure.get() ?: "解压引擎未连接")
             service.run(arguments, object : INativeEvents.Stub() {
                 override fun onStarted(value: Int) { pid = value }
-                override fun onProgress(done: Long, total: Long) = listener.onProgress(done, total)
-                override fun onPassword(path: String, rejected: Boolean) = listener.onPassword(path, rejected)?.also { replies.add(it) }
-                override fun onPasswordAccepted(password: CharArray) { try { listener.onPasswordAccepted(password) } finally { password.fill('\u0000') } }
-                override fun onChoose(paths: Array<String>) = listener.onChoose(paths)
+                override fun onProgress(done: Long, total: Long) = callback(true) { listener.onProgress(done, total) }
+                override fun onPassword(path: String, rejected: Boolean) = callback<CharArray?>(null) { listener.onPassword(path, rejected)?.also { replies.add(it) } }
+                override fun onPasswordAccepted(password: CharArray) { try { callback(Unit) { listener.onPasswordAccepted(password) } } finally { password.fill('\u0000') } }
+                override fun onChoose(paths: Array<String>) = callback(-2) { listener.onChoose(paths) }
                 override fun onComplete(error: String) { if (error.isNotEmpty()) failure.compareAndSet(null, error); finished.countDown() }
             })
             var cancelTime = 0L
@@ -71,6 +79,10 @@ internal object NativeWorker {
             return response.readText()
         } catch (error: RemoteException) { throw NativeWorkerException("解压引擎连接中断，已完成的文件保留。") }
         finally {
+            synchronized(gate) { closed = true }
+            // Engine death can interrupt a password/branch RPC. Release its prompt before retiring the job.
+            onStopped()
+            synchronized(gate) { while (callbacks > 0) gate.wait(250) }
             passwords.forEach { it.fill('\u0000') }; replies.forEach { it.fill('\u0000') }; replies.clear(); arguments.clear()
             linked?.let { runCatching { it.unlinkToDeath(death, 0) } }
             if (bound) context.unbindService(connection)

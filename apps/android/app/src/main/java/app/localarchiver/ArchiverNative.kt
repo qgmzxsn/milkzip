@@ -1,6 +1,6 @@
 package app.localarchiver
 
-/** Invoked synchronously on the task worker, never on the UI thread. */
+/** Invoked off the UI thread; process-isolated jobs forward these callbacks through Binder. */
 interface NativeCallbacks {
     fun onProgress(done: Long, total: Long): Boolean
     fun onPassword(path: String, rejected: Boolean): CharArray?

@@ -182,7 +182,7 @@ object Tasks {
                             arguments.putLong("bytes", minOf(job.settings.maxBytes, remaining))
                             arguments.putBoolean("keep", job.settings.keep); arguments.putBoolean("ask", job.settings.ask)
                         }
-                        val response = NativeWorker.run(context, arguments, passwords(), File(scratch, "native-response.json"), callbacks, cancelled::get)
+                        val response = NativeWorker.run(context, arguments, passwords(), File(scratch, "native-response.json"), callbacks, cancelled::get) { future?.complete(PromptReply()) }
                         val json = JSONObject(response); code = json.getInt("code"); detail = json.optString("detail")
                         if (code == 0 && job.kind == "list") {
                             val rows = json.getJSONArray("entries")
