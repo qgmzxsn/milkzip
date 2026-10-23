@@ -114,6 +114,15 @@ class ReliabilityTest {
             }
         } finally { root.deleteRecursively() }
     }
+    private fun awaitDeleteConfirmation() {
+        val end = System.currentTimeMillis() + 10000
+        while (System.currentTimeMillis() < end) {
+            inst.waitForIdleSync()
+            if (inst.uiAutomation.rootInActiveWindow?.findAccessibilityNodeInfosByText("删除 1 项？")?.isNotEmpty() == true) return
+            Thread.sleep(50)
+        }
+        fail("Delete confirmation did not become the active window")
+    }
     @Test fun longPressDeleteCanBeCancelledAndConfirmed() {
         val file = File(storage.results, "删除测试.txt").apply { writeText("delete fixture") }
         context.getSharedPreferences("mobile-settings", android.content.Context.MODE_PRIVATE).edit().putBoolean("notification-asked", true).commit()
@@ -123,8 +132,10 @@ class ReliabilityTest {
             while (System.currentTimeMillis() < until && inst.uiAutomation.rootInActiveWindow?.findAccessibilityNodeInfosByText(file.name)?.isEmpty() != false) Thread.sleep(100)
             onView(withText(file.name)).perform(longClick())
             onView(withText("删除")).inRoot(isDialog()).perform(click())
+            awaitDeleteConfirmation()
             onView(withId(android.R.id.button2)).inRoot(isDialog()).perform(click()); assertTrue(file.exists())
             onView(withText(file.name)).perform(longClick()); onView(withText("删除")).inRoot(isDialog()).perform(click())
+            awaitDeleteConfirmation()
             onView(withId(android.R.id.button1)).inRoot(isDialog()).perform(click())
             val end = System.currentTimeMillis() + 10000
             while (System.currentTimeMillis() < end && (file.exists() || Tasks.state != null)) Thread.sleep(100)
