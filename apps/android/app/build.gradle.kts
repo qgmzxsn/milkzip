@@ -11,8 +11,8 @@ android {
         applicationId = "app.localarchiver"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6001
-        versionName = "0.6.0-android.1"
+        versionCode = 6002
+        versionName = "0.6.0-android.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
@@ -23,6 +23,7 @@ android {
     }
     buildFeatures {
         buildConfig = false
+        aidl = true
     }
     // Package the ABI libraries built by scripts/build-android.sh.
     // This debug APK does not compile 7-Zip or the core again.

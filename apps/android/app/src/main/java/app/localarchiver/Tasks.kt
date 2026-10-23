@@ -42,7 +42,7 @@ object Tasks {
     @Volatile var records: List<TaskRecord> = emptyList(); private set
     @Volatile private var active: Job? = null
     private val cancelled = AtomicBoolean(false)
-    private var future: CompletableFuture<PromptReply>? = null
+    @Volatile private var future: CompletableFuture<PromptReply>? = null
     private var running = false
     private var lastNotify = 0L
     private val sessionPasswords = mutableListOf<CharArray>()
@@ -74,7 +74,7 @@ object Tasks {
     }
     private fun title(job: Job): String = when (job.kind) {
         "list" -> "打开 ${job.sources.first().name}"; "extract" -> "解压 ${job.sources.first().name}"
-        "test" -> "检查 ${job.sources.first().name}"; "zip" -> "打包 ${job.sources.size} 项"; "export" -> "导出结果"; else -> job.kind
+        "test" -> "检查 ${job.sources.first().name}"; "zip" -> "打包 ${job.sources.size} 项"; "export" -> "导出结果"; "delete" -> "删除 ${job.sources.size} 项"; else -> job.kind
     }
     fun cancel() { cancelled.set(true); state = state?.copy(phase = "正在取消…"); future?.complete(PromptReply()); publish() }
     fun reply(id: String, reply: PromptReply) {
@@ -145,26 +145,44 @@ object Tasks {
             val storage = Storage(context); val scratch = storage.jobDirectory()
             var code = 0; var detail = ""; var output: File? = null; var keepScratch = false
             try {
-                val engine = context.applicationInfo.nativeLibraryDir + "/lib7z.so"
                 when (job.kind) {
+                    "delete" -> {
+                        job.sources.forEach(storage::checkDeletable)
+                        var done = 0
+                        val failures = mutableListOf<String>()
+                        try {
+                            for (node in job.sources.distinctBy { it.location }) {
+                                try {
+                                    storage.delete(node, cancelled::get) { name -> progress("删除 $name", done.toLong(), job.sources.size.toLong()) }
+                                    done++
+                                } catch (error: CancellationException) { throw error }
+                                catch (error: Exception) { failures.add("${node.name}：${error.message ?: "删除失败"}") }
+                                detail = "已删除 $done 项" + if (failures.isEmpty()) "" else "\n" + failures.joinToString("\n")
+                            }
+                            code = if (failures.isEmpty()) 0 else if (done > 0) 13 else 2
+                        } finally {
+                            // Retire the cached browser view even if a directory was only partly deleted.
+                            page = null; pageVersion++
+                        }
+                    }
                     "list", "test", "extract" -> {
                         val source = job.sources.first()
                         val file = job.staged?.takeIf { it.exists() } ?: storage.stage(source, job.siblings, scratch, cancelled::get) { phase, n, total -> progress(phase, n, total) }
                         progress("读取压缩包", force = true)
-                        val response = when (job.kind) {
-                            "list" -> ArchiverNative.nativeList(file.absolutePath, engine, passwords(), job.prefix, callbacks)
-                            "test" -> ArchiverNative.nativeTest(file.absolutePath, engine, passwords(), callbacks)
-                            else -> {
-                                val parent = job.parent ?: storage.results
-                                val preferred = job.name.ifEmpty { Rules.resultName(source.name) }
-                                output = storage.uniqueDirectory(parent, preferred)
-                                val remaining = (output!!.usableSpace - (32L shl 20)).coerceAtLeast(0)
-                                require(remaining > 0) { "存储空间不足" }
-                                val cap = minOf(job.settings.maxBytes, remaining)
-                                ArchiverNative.nativeExtractNested(file.absolutePath, output!!.absolutePath, engine, passwords(),
-                                    if (job.settings.recursive) job.settings.depth else 1, cap, job.settings.keep, job.settings.ask, callbacks)
-                            }
+                        val arguments = Bundle().apply {
+                            putString("kind", job.kind); putString("path", file.absolutePath); putString("prefix", job.prefix)
                         }
+                        if (job.kind == "extract") {
+                            val parent = job.parent ?: storage.results
+                            output = storage.uniqueDirectory(parent, job.name.ifEmpty { Rules.resultName(source.name) })
+                            val remaining = (output!!.usableSpace - (32L shl 20)).coerceAtLeast(0)
+                            require(remaining > 0) { "存储空间不足" }
+                            arguments.putString("dest", output!!.absolutePath)
+                            arguments.putInt("depth", if (job.settings.recursive) job.settings.depth else 1)
+                            arguments.putLong("bytes", minOf(job.settings.maxBytes, remaining))
+                            arguments.putBoolean("keep", job.settings.keep); arguments.putBoolean("ask", job.settings.ask)
+                        }
+                        val response = NativeWorker.run(context, arguments, passwords(), File(scratch, "native-response.json"), callbacks, cancelled::get)
                         val json = JSONObject(response); code = json.getInt("code"); detail = json.optString("detail")
                         if (code == 0 && job.kind == "list") {
                             val rows = json.getJSONArray("entries")
@@ -196,9 +214,9 @@ object Tasks {
                     val exported = storage.export(output!!, android.net.Uri.parse(job.exportTree), cancelled::get) { phase, n, total -> progress(phase, n, total) }
                     detail += "\n已保存到：$exported\n本地结果：${output!!.absolutePath}"
                 }
-            } catch (_: CancellationException) { code = 9; detail += "\n任务已取消，已完成的解压文件保留在结果目录。" }
+            } catch (_: CancellationException) { code = 9; detail += if (job.kind == "delete") "\n删除已取消，已经删除的文件无法恢复。" else "\n任务已取消，已完成的解压文件保留在结果目录。" }
             catch (error: Throwable) {
-                code = if (cancelled.get()) 9 else 2
+                code = if (cancelled.get()) 9 else if (error is NativeWorkerException) 4 else 2
                 detail += "\n" + (error.message ?: error.javaClass.simpleName)
             } finally {
                 sessionPasswords.forEach { it.fill('\u0000') }; sessionPasswords.clear()

@@ -40,6 +40,12 @@ with tempfile.TemporaryDirectory(prefix="jni-", dir=library.parent) as directory
     else:
         # Legacy ZipCrypto has platform-dependent non-ASCII password encodings.
         write_encrypted_zip(encrypted, "secret.txt", b"secret", password.encode("ascii"))
+    if seven:
+        machine = base / "machine.bin"
+        machine.write_bytes((b"\xe8\x05\x00\x00\x00\x90" * 500000))
+        subprocess.run([seven, "a", "-t7z", "-m0=BCJ2", "-m1=LZMA2", "-m2=LZMA2", "-m3=LZMA2",
+            "-mb0:1", "-mb0s1:2", "-mb0s2:3", str(base / "threaded.7z"), str(machine)],
+            check=True, capture_output=True, timeout=60)
     subprocess.run(
         [java, "-Xcheck:jni", "-cp", str(base), "app.localarchiver.ArchiverNative",
          str(library), str(jni), str(engine), str(base), suffix],

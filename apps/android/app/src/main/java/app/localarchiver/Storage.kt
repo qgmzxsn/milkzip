@@ -128,6 +128,48 @@ class Storage(private val context: Context) {
         return root
     }
     fun jobDirectory(): File = File(context.cacheDir, "jobs/${UUID.randomUUID()}").apply { mkdirs() }
+    fun checkDeletable(node: Node) {
+        if (node.isDocument) {
+            val uri = Uri.parse(node.location)
+            require(DocumentsContract.isDocumentUri(context, uri)) { "此来源不支持删除，请授权所在文件夹后重试" }
+            node.tree?.let { tree ->
+                require(DocumentsContract.getDocumentId(uri) != DocumentsContract.getTreeDocumentId(Uri.parse(tree))) { "不能删除已授权文件夹的根目录" }
+            }
+        } else {
+            val input = node.file.toPath().toAbsolutePath().normalize()
+            val target = input.parent?.toFile()?.canonicalFile?.toPath()?.resolve(input.fileName) ?: input
+            require(target.parent != null) { "不能删除存储根目录" }
+            val protected = listOfNotNull(shared, context.dataDir, context.getExternalFilesDir(null), results)
+            require(protected.none { it.canonicalFile.toPath().startsWith(target) }) { "不能删除存储或应用的根目录" }
+        }
+    }
+    fun delete(node: Node, cancelled: () -> Boolean, progress: (String) -> Unit) {
+        checkDeletable(node)
+        fun check(name: String) {
+            if (cancelled()) throw CancellationException()
+            progress(name)
+        }
+        check(node.name)
+        if (node.isDocument) {
+            if (!DocumentsContract.deleteDocument(context.contentResolver, Uri.parse(node.location))) throw IOException("文件来源未能删除 ${node.name}")
+            return
+        }
+        // walkFileTree does not follow links and does not consume the Java stack for deep folders.
+        val input = node.file.toPath().toAbsolutePath().normalize()
+        val path = input.parent!!.toFile().canonicalFile.toPath().resolve(input.fileName)
+        java.nio.file.Files.walkFileTree(path, object : java.nio.file.SimpleFileVisitor<java.nio.file.Path>() {
+            override fun preVisitDirectory(dir: java.nio.file.Path, attrs: java.nio.file.attribute.BasicFileAttributes): java.nio.file.FileVisitResult {
+                check(dir.fileName.toString()); return java.nio.file.FileVisitResult.CONTINUE
+            }
+            override fun visitFile(file: java.nio.file.Path, attrs: java.nio.file.attribute.BasicFileAttributes): java.nio.file.FileVisitResult {
+                check(file.fileName.toString()); java.nio.file.Files.delete(file); return java.nio.file.FileVisitResult.CONTINUE
+            }
+            override fun postVisitDirectory(dir: java.nio.file.Path, error: IOException?): java.nio.file.FileVisitResult {
+                if (error != null) throw error
+                check(dir.fileName.toString()); java.nio.file.Files.delete(dir); return java.nio.file.FileVisitResult.CONTINUE
+            }
+        })
+    }
     fun shareCopy(node: Node): File {
         val folder = File(context.cacheDir, "share").apply { mkdirs() }
         val file = File(folder, "${UUID.randomUUID()}-${Rules.safeName(node.name)}")

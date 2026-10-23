@@ -198,6 +198,7 @@ class MainActivity : Activity() {
             if (selected.isNotEmpty()) {
                 selectionBar.addView(text("已选 ${selected.size} 项", 13f, muted), LinearLayout.LayoutParams(0, -2, 1f))
                 selectionBar.add(button("打包 ZIP") { createZip(files.filter { it.location in selected }) })
+                selectionBar.add(button("删除") { deleteFiles(files.filter { it.location in selected }) })
                 selectionBar.add(button("取消") { selected.clear(); refreshRows() })
             }
             empty.text = if (loading) "读取中…" else if (query.isNotEmpty()) "没有匹配的文件" else "这个目录是空的\n可以选择文件，或授权一个文件夹"
@@ -289,12 +290,22 @@ class MainActivity : Activity() {
         AlertDialog.Builder(this).setTitle("排序方式").setItems(labels) { _, i -> sort = arrayOf("name", "size", "date")[i]; prefs.edit().putString("sort", sort).apply(); render() }.show()
     }
     private fun fileMenu(node: Node, select: () -> Unit) {
-        AlertDialog.Builder(this).setTitle(node.name).setItems(arrayOf("打开压缩包", "一键解压", "解压选项…", "检查完整性", "选择 / 多选打包", "文件信息", "分享文件", "用其他应用打开")) { _, i -> when (i) {
+        AlertDialog.Builder(this).setTitle(node.name).setItems(arrayOf("打开压缩包", "一键解压", "解压选项…", "检查完整性", "选择 / 多选打包", "文件信息", "分享文件", "用其他应用打开", "删除")) { _, i -> when (i) {
             0 -> listArchive(node, files); 1 -> if (node.directory) notify("请选择压缩包文件") else quickExtract(node, files)
             2 -> if (node.directory) notify("请选择压缩包文件") else extractDialog(node, files)
             3 -> if (node.directory) notify("请选择压缩包文件") else submit(Job("test", listOf(node), files), true)
             4 -> select(); 5 -> nodeInfo(node); 6 -> if (node.directory) notify("文件夹可以先打包为 ZIP") else share(node); 7 -> if (!node.directory) openWith(node)
+            8 -> deleteFiles(listOf(node))
         } }.show()
+    }
+    private fun deleteFiles(nodes: List<Node>) {
+        if (nodes.isEmpty()) return
+        val names = nodes.take(5).joinToString("\n") { it.name + if (it.directory) "（文件夹）" else "" }
+        AlertDialog.Builder(this).setTitle("删除 ${nodes.size} 项？")
+            .setMessage(names + (if (nodes.size > 5) "\n等 ${nodes.size} 项" else "") + "\n\n文件夹内的所有内容也会删除。此操作无法撤销。")
+            .setNegativeButton("取消", null).setPositiveButton("删除") { _, _ ->
+                submit(Job("delete", nodes), true); selected.clear()
+            }.show()
     }
     private fun mainMenu() {
         AlertDialog.Builder(this).setTitle("MilkZip").setItems(arrayOf("选择文件 / 分卷", "授权文件夹", "打包所选文件", "设置", "关于 MilkZip", "刷新", if (archive != null) "压缩包详情" else "当前文件夹信息")) { _, i -> when (i) {
@@ -507,6 +518,7 @@ class MainActivity : Activity() {
     private fun updateTask() {
         if (Tasks.pageVersion != pageVersion) {
             pageVersion = Tasks.pageVersion
+            if (Tasks.page == null) { archive = null; selected.clear(); if (tab == 0) render() }
             Tasks.page?.let { archive = it; files = it.rows; query = ""; tab = 0; selected.clear(); render() }
         }
         val latest = Tasks.records.firstOrNull()
