@@ -8,6 +8,7 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.action.ViewActions.*
 import androidx.test.espresso.matcher.ViewMatchers.*
+import androidx.test.espresso.matcher.RootMatchers.isDialog
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.json.JSONObject
@@ -108,10 +109,10 @@ class ReliabilityTest {
             val until = System.currentTimeMillis() + 10000
             while (System.currentTimeMillis() < until && inst.uiAutomation.rootInActiveWindow?.findAccessibilityNodeInfosByText(file.name)?.isEmpty() != false) Thread.sleep(100)
             onView(withText(file.name)).perform(longClick())
-            onView(withText("删除")).perform(click())
-            onView(withText("取消")).perform(click()); assertTrue(file.exists())
-            onView(withText(file.name)).perform(longClick()); onView(withText("删除")).perform(click())
-            onView(withText("删除")).perform(click())
+            onView(withText("删除")).inRoot(isDialog()).perform(click())
+            onView(withId(android.R.id.button2)).inRoot(isDialog()).perform(click()); assertTrue(file.exists())
+            onView(withText(file.name)).perform(longClick()); onView(withText("删除")).inRoot(isDialog()).perform(click())
+            onView(withId(android.R.id.button1)).inRoot(isDialog()).perform(click())
             val end = System.currentTimeMillis() + 10000
             while (System.currentTimeMillis() < end && (file.exists() || Tasks.state != null)) Thread.sleep(100)
             assertFalse(file.exists()); assertEquals(0, Tasks.records.first().code)

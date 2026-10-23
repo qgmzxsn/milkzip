@@ -5,6 +5,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.IBinder
 import android.os.Process
+import android.os.SystemClock
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -23,7 +24,14 @@ class NativeWorkerService : Service() {
                 try {
                     events.onStarted(Process.myPid())
                     val listener = object : NativeCallbacks {
-                        override fun onProgress(done: Long, total: Long) = cancelled.get() || events.onProgress(done, total)
+                        private var lastProgress = 0L
+                        override fun onProgress(done: Long, total: Long): Boolean {
+                            if (cancelled.get()) return true
+                            val now = SystemClock.elapsedRealtime()
+                            if (lastProgress != 0L && now - lastProgress < 100 && (total <= 0 || done < total)) return false
+                            lastProgress = now
+                            return events.onProgress(done, total)
+                        }
                         override fun onPassword(path: String, rejected: Boolean) = if (cancelled.get()) null else events.onPassword(path, rejected)
                         override fun onPasswordAccepted(password: CharArray) { events.onPasswordAccepted(password) }
                         override fun onChoose(paths: Array<String>) = if (cancelled.get()) -2 else events.onChoose(paths)

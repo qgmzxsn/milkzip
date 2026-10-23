@@ -290,7 +290,7 @@ class MainActivity : Activity() {
         AlertDialog.Builder(this).setTitle("排序方式").setItems(labels) { _, i -> sort = arrayOf("name", "size", "date")[i]; prefs.edit().putString("sort", sort).apply(); render() }.show()
     }
     private fun fileMenu(node: Node, select: () -> Unit) {
-        AlertDialog.Builder(this).setTitle(node.name).setItems(arrayOf("打开压缩包", "一键解压", "解压选项…", "检查完整性", "选择 / 多选打包", "文件信息", "分享文件", "用其他应用打开", "删除")) { _, i -> when (i) {
+        AlertDialog.Builder(this).setTitle(node.name).setItems(arrayOf("打开压缩包", "一键解压", "解压选项…", "检查完整性", "选择 / 多选", "文件信息", "分享文件", "用其他应用打开", "删除")) { _, i -> when (i) {
             0 -> listArchive(node, files); 1 -> if (node.directory) notify("请选择压缩包文件") else quickExtract(node, files)
             2 -> if (node.directory) notify("请选择压缩包文件") else extractDialog(node, files)
             3 -> if (node.directory) notify("请选择压缩包文件") else submit(Job("test", listOf(node), files), true)
@@ -309,7 +309,7 @@ class MainActivity : Activity() {
     }
     private fun mainMenu() {
         AlertDialog.Builder(this).setTitle("MilkZip").setItems(arrayOf("选择文件 / 分卷", "授权文件夹", "打包所选文件", "设置", "关于 MilkZip", "刷新", if (archive != null) "压缩包详情" else "当前文件夹信息")) { _, i -> when (i) {
-            0 -> pickFiles(); 1 -> pickTree(102); 2 -> if (selected.isEmpty()) { notify("长按文件后选择“多选打包”，也可通过系统选择器选文件"); pickFiles() } else createZip(files.filter { it.location in selected })
+            0 -> pickFiles(); 1 -> pickTree(102); 2 -> if (selected.isEmpty()) { notify("长按文件后选择“选择 / 多选”，也可通过系统选择器选文件"); pickFiles() } else createZip(files.filter { it.location in selected })
             3 -> settings(); 4 -> about(); 5 -> render(); 6 -> archive?.let { archiveInfo(it) } ?: folderInfo()
         } }.show()
     }
