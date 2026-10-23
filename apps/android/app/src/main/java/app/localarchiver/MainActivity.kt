@@ -552,14 +552,15 @@ class MainActivity : Activity() {
         if (!resumed || p == null) { if (p == null) { promptDialog?.dismiss(); promptDialog = null; promptId = null }; return }
         if (promptId == p.id && promptDialog?.isShowing == true) return
         promptDialog?.dismiss(); promptId = p.id
+        val dialog: AlertDialog
         if (p.branches != null) {
             var choice = 0
-            promptDialog = AlertDialog.Builder(this).setTitle("继续解开哪些文件？")
+            dialog = AlertDialog.Builder(this).setTitle("继续解开哪些文件？")
                 .setSingleChoiceItems(p.branches.map { File(it).name }.toTypedArray(), 0) { _, i -> choice = i }
                 .setPositiveButton("解开所选") { _, _ -> Tasks.reply(p.id, PromptReply(choice = choice)) }
                 .setNeutralButton("全部解开") { _, _ -> Tasks.reply(p.id, PromptReply(choice = -3)) }
                 .setNegativeButton("到这一层结束") { _, _ -> Tasks.reply(p.id, PromptReply(choice = -1)) }
-                .setOnCancelListener { Tasks.cancel() }.create()
+                .setOnCancelListener { if (Tasks.prompt?.id == p.id) Tasks.cancel() }.create()
         } else {
             window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
             val form = padded(column(), 20)
@@ -569,17 +570,23 @@ class MainActivity : Activity() {
             val save = CheckBox(this).apply { text = "验证成功后保存到密码本" }
             val show = CheckBox(this).apply { text = "显示密码"; setOnCheckedChangeListener { _, checked -> password.transformationMethod = if (checked) null else PasswordTransformationMethod.getInstance() } }
             form.add(password); form.add(show); form.add(save)
-            promptDialog = AlertDialog.Builder(this).setTitle("需要解压密码").setView(form).setPositiveButton("继续", null).setNegativeButton("取消任务") { _, _ -> Tasks.cancel() }
-                .setOnCancelListener { Tasks.cancel() }.create()
-            promptDialog!!.setOnShowListener { promptDialog!!.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val value = password.text.toString()
-                if (!Rules.validPassword(value)) { password.error = "请输入 1–1024 字节的密码"; return@setOnClickListener }
-                val chars = value.toCharArray(); password.text.clear(); Tasks.reply(p.id, PromptReply(chars, save.isChecked)); promptDialog?.dismiss()
-            } }
-            promptDialog!!.setOnDismissListener { password.text.clear(); if (tab != 2) window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) }
+            val passwordDialog = AlertDialog.Builder(this).setTitle("需要解压密码").setView(form).setPositiveButton("继续", null).setNegativeButton("取消任务") { _, _ -> if (Tasks.prompt?.id == p.id) Tasks.cancel() }
+                .setOnCancelListener { if (Tasks.prompt?.id == p.id) Tasks.cancel() }.create()
+            // onShow is posted by Android and can arrive after the task has dismissed this dialog.
+            passwordDialog.setOnShowListener {
+                if (!passwordDialog.isShowing || Tasks.prompt?.id != p.id) return@setOnShowListener
+                passwordDialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                    val value = password.text.toString()
+                    if (!Rules.validPassword(value)) { password.error = "请输入 1–1024 字节的密码"; return@setOnClickListener }
+                    val chars = value.toCharArray(); password.text.clear(); Tasks.reply(p.id, PromptReply(chars, save.isChecked)); passwordDialog.dismiss()
+                }
+            }
+            passwordDialog.setOnDismissListener { password.text.clear(); if (tab != 2) window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) }
+            dialog = passwordDialog
         }
-        if (p.branches == null) promptDialog!!.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-        promptDialog!!.setCanceledOnTouchOutside(false); promptDialog!!.show()
+        promptDialog = dialog
+        if (p.branches == null) dialog.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        dialog.setCanceledOnTouchOutside(false); dialog.show()
     }
     private fun passwordInput() = EditText(this).apply { inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS; isSaveEnabled = false; setSingleLine(); hint = "密码（保留首尾空格）"; importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS }
     private fun loadPasswords() {
