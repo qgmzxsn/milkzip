@@ -89,6 +89,19 @@ class ReliabilityTest {
             assertEquals(3000000L, File(root, "recovered/machine.bin").length())
         } finally { root.deleteRecursively() }
     }
+    @Test fun promptedPasswordCrossesProcessAndReplyIsWiped() {
+        val root = storage.jobDirectory()
+        val reply = "安卓 密码".toCharArray()
+        try {
+            val source = fixture("secret.7z", root)
+            val listener = object : Listener() {
+                override fun onPassword(path: String, rejected: Boolean) = reply
+            }
+            val result = invoke(root, source, File(root, "secret"), listener)
+            assertEquals(result.toString(), 0, result.getInt("code"))
+            assertTrue(reply.all { it == '\u0000' })
+        } finally { reply.fill('\u0000'); root.deleteRecursively() }
+    }
     @Test fun thirtyTwoLayer7zAndExecutableContainers() {
         val root = storage.jobDirectory()
         try {

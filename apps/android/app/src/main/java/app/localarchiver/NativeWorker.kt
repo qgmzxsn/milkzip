@@ -9,6 +9,7 @@ import android.os.*
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
@@ -21,6 +22,7 @@ internal object NativeWorker {
         val connected = CountDownLatch(1); val finished = CountDownLatch(1)
         val remote = AtomicReference<INativeWorker?>()
         val failure = AtomicReference<String?>()
+        val replies = ConcurrentLinkedQueue<CharArray>()
         var linked: IBinder? = null
         pid = 0
         fun died() { if (finished.count == 0L) return; failure.compareAndSet(null, "解压引擎意外退出"); connected.countDown(); finished.countDown() }
@@ -46,7 +48,7 @@ internal object NativeWorker {
             service.run(arguments, object : INativeEvents.Stub() {
                 override fun onStarted(value: Int) { pid = value }
                 override fun onProgress(done: Long, total: Long) = listener.onProgress(done, total)
-                override fun onPassword(path: String, rejected: Boolean) = listener.onPassword(path, rejected)
+                override fun onPassword(path: String, rejected: Boolean) = listener.onPassword(path, rejected)?.also { replies.add(it) }
                 override fun onPasswordAccepted(password: CharArray) { try { listener.onPasswordAccepted(password) } finally { password.fill('\u0000') } }
                 override fun onChoose(paths: Array<String>) = listener.onChoose(paths)
                 override fun onComplete(error: String) { if (error.isNotEmpty()) failure.compareAndSet(null, error); finished.countDown() }
@@ -69,7 +71,7 @@ internal object NativeWorker {
             return response.readText()
         } catch (error: RemoteException) { throw NativeWorkerException("解压引擎连接中断，已完成的文件保留。") }
         finally {
-            passwords.forEach { it.fill('\u0000') }; arguments.clear()
+            passwords.forEach { it.fill('\u0000') }; replies.forEach { it.fill('\u0000') }; replies.clear(); arguments.clear()
             linked?.let { runCatching { it.unlinkToDeath(death, 0) } }
             if (bound) context.unbindService(connection)
             response.delete(); pid = 0
