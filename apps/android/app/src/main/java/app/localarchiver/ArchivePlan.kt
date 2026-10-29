@@ -16,9 +16,22 @@ object ArchivePlan {
         val parent = node.parent?.let { documentId(it) } ?: documentId(node.location)?.substringBeforeLast('/', "")
         return "$authority:${parent ?: node.location.substringBeforeLast('/')}"
     }
+    private fun family(node: Node): String? {
+        val type = Rules.volumeGroup(node.name)?.substringBefore(':') ?: return null
+        val stem = when (type) {
+            "rar" -> node.name.replace(Regex("(?i)\\.part[0-9]+\\.rar$"), "").let { if (it == node.name) it.substringBeforeLast('.') else it }
+            "zip" -> node.name.substringBeforeLast('.')
+            else -> node.name.substringBeforeLast('.').let { value ->
+                val ext = value.substringAfterLast('.', "")
+                if (ext.lowercase(java.util.Locale.ROOT) in listOf("7z", "zip", "rar")) value.substringBeforeLast('.') + "." + ext.lowercase(java.util.Locale.ROOT) else value
+            }
+        }
+        // Android paths can contain A.zip and a.zip as independent inputs. Never delete both as one group.
+        return "$type:$stem"
+    }
     fun companions(source: Node, siblings: List<Node>): List<Node> {
-        val group = Rules.volumeGroup(source.name) ?: return listOf(source)
-        return (siblings.filter { !it.directory && directoryKey(it) == directoryKey(source) && Rules.volumeGroup(it.name) == group } + source)
+        val group = family(source) ?: return listOf(source)
+        return (siblings.filter { !it.directory && directoryKey(it) == directoryKey(source) && family(it) == group } + source)
             .distinctBy { it.location }
     }
     private fun order(node: Node): Long {
@@ -32,7 +45,7 @@ object ArchivePlan {
     fun roots(selected: List<Node>, siblings: List<Node>): List<Node> {
         val groups = linkedMapOf<String, Node>()
         for (node in selected.filter { !it.directory }) {
-            val key = Rules.volumeGroup(node.name)?.let { "${directoryKey(node)}:$it" } ?: node.location
+            val key = family(node)?.let { "${directoryKey(node)}:$it" } ?: node.location
             groups.putIfAbsent(key, companions(node, siblings).minWith(compareBy<Node> { order(it) }.thenBy { it.name }))
         }
         return groups.values.toList()
