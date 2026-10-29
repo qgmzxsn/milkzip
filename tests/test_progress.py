@@ -16,6 +16,8 @@ API.archiver_open.argtypes = [c.c_char_p, c.c_char_p, c.c_char_p, c.POINTER(c.c_
 API.archiver_open.restype = c.c_int
 API.archiver_extract_with_progress.argtypes = [c.c_void_p, c.c_char_p, c.c_char_p, CALLBACK, c.c_void_p]
 API.archiver_extract_with_progress.restype = c.c_int
+API.archiver_test_with_progress.argtypes = [c.c_void_p, c.c_char_p, CALLBACK, c.c_void_p]
+API.archiver_test_with_progress.restype = c.c_int
 API.archiver_close.argtypes = [c.c_void_p]
 
 
@@ -44,6 +46,21 @@ class ProgressTests(unittest.TestCase):
         dest = self.base / name
         result = API.archiver_extract_with_progress(self.handle, str(dest).encode(), None, progress, None)
         return result, events, dest
+
+    def test_integrity_progress_and_cancellation(self):
+        events = []
+        @CALLBACK
+        def observe(done, total, _):
+            events.append((done, total))
+            return 0
+        self.assertEqual(API.archiver_test_with_progress(self.handle, None, observe, None), 0)
+        self.assertTrue(any(done > 0 for done, _ in events))
+        @CALLBACK
+        def cancel(done, total, _):
+            return 1
+        self.assertEqual(API.archiver_test_with_progress(self.handle, None, cancel, None), 9)
+        self.assertEqual(API.archiver_test_with_progress(self.handle, None, observe, None), 0)
+        self.assertFalse((self.base / 'hello.txt').exists())
 
     def test_progress_success(self):
         result, events, dest = self.extract('out')

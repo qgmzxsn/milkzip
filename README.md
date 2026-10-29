@@ -1,12 +1,16 @@
 # MilkZip
 
-离线打开、浏览和解压本机压缩包的 Windows 桌面程序。文件和密码都在本机处理，无需账号，不上传文件，也不会运行解压出的程序。
+离线打开、浏览和解压本机压缩包，提供 Windows 桌面版和 Android 预览版。文件和密码都在本机处理，无需账号，不上传文件，也不会运行解压出的程序。
 
 当前版本：[**v0.6.0**](https://github.com/qgmzxsn/milkzip/releases/tag/v0.6.0)。
 
 [**下载 Windows 64 位便携版**](https://github.com/qgmzxsn/milkzip/releases/download/v0.6.0/milkzip-0.6.0-windows-x64-portable.zip) · [校验文件](https://github.com/qgmzxsn/milkzip/releases/download/v0.6.0/SHA256SUMS.txt)
 
 完整解压 ZIP 后运行 `milkzip.exe`，保留旁边所有 DLL、platforms 和许可文件。无需另装 Qt 或 7-Zip。v0.3.0 保留在历史发行版中。
+
+## Android 预览版
+
+原生手机界面采用“文件 / 任务 / 密码本”三个页面，复用 Windows v0.6.0 的 7-Zip + LZ4 核心，移植递归、分卷、密码、完整性检查和 ZIP 打包功能，提供系统文件夹授权及结果导出。Android 8.0+，ARM64 / x86_64，密码本由 Android Keystore 加密。构建方法、使用方法及测试范围见 [Android 说明](apps/android/README.md)；APK 和模拟器测试报告见 PR 的 Android Actions 产物。
 
 ![Windows 实际界面](docs/screenshots/main-window.png)
 
@@ -39,7 +43,7 @@
 
 最多保存 64 条，每条最多 1024 UTF-8 字节。使用 **Windows 凭据管理器**，每条密码单独保存；原有 0.3.0 密码本会在下次保存时迁移。密码保存在本机当前 Windows 用户的凭据管理器中，**不在程序文件夹内**；拷走程序文件夹不会带走密码。先按顺序快速验证候选密码，全部不匹配后才询问。解压密码输入框以明文显示；弹窗中勾选保存的密码仅在验证成功后写入。密码不写入日志或命令行。不进行密码破解。
 
-其他系统可编译核心与 Qt 界面，但尚不提供持久密码本，也没有正式发布包。
+Android 预览版提供系统密钥加密的持久密码本。macOS 等平台可编译核心与 Qt 界面，尚无正式发布包。
 
 ## 界面
 

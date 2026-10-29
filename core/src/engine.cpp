@@ -641,6 +641,7 @@ struct ExtractCtx {
   ArchiverProgressCallback progress = nullptr;
   void *progress_user = nullptr;
   bool cancelled = false;
+  bool testing = false;
 
   bool report_progress() {
     if (cancelled) return false;
@@ -782,7 +783,8 @@ Z7_COM7F_IMF(ExtractCallback::SetTotal(UInt64 total)) {
   ctx->total = total;
   return ctx->report_progress() ? S_OK : E_ABORT;
 }
-Z7_COM7F_IMF(ExtractCallback::SetCompleted(const UInt64 * /*completeValue*/)) {
+Z7_COM7F_IMF(ExtractCallback::SetCompleted(const UInt64 *completeValue)) {
+  if (ctx && ctx->testing && completeValue) ctx->written = *completeValue;
   return ctx && ctx->report_progress() ? S_OK : E_ABORT;
 }
 
@@ -1280,7 +1282,7 @@ ArchiverResult finish_open_result(HRESULT hr, const PasswordState &password, Vol
 ArchiverResult open_with(EngineLib &lib, const GUID &clsid, const std::string &path,
                          PasswordState &password, CMyComPtr<IInArchive> &archive,
                          CMyComPtr<IInStream> &stream, std::string &message,
-                         uint64_t slice_base = 0, VolumeContext *volumes = nullptr) {
+                         uint64_t slice_base = 0, VolumeContext *volumes = nullptr, uint64_t search_limit = 0) {
   FileInStream *raw = open_fd(path, slice_base);
   if (!raw) {
     message = "could not open archive file";
@@ -1299,7 +1301,7 @@ ArchiverResult open_with(EngineLib &lib, const GUID &clsid, const std::string &p
   callback->password = &password;
   callback->volumes = volumes;
   CMyComPtr<IArchiveOpenCallback> held(callback);
-  UInt64 max_check = 0;
+  UInt64 max_check = search_limit;
   hr = in_archive->Open(in, &max_check, held);
   ArchiverResult result = finish_open_result(hr, password, volumes, in_archive, message);
   if (result != ARCHIVER_OK) {
@@ -1986,6 +1988,7 @@ void scan_stub_signatures(const std::string &path, uint64_t file_size, std::vect
       if (is_7z_sig(p)) remember_hit(hits, Kind::SevenZ, off, 64);
       else if (i + 7 <= got && is_rar_sig(p)) remember_hit(hits, Kind::Rar, off, 64);
       else if (is_zip_local(p)) remember_hit(hits, Kind::Zip, off, 64);
+      else if (i + 8 <= got && !memcmp(p, "MSCF\0\0\0\0", 8)) remember_hit(hits, Kind::Cab, off, 64);
     }
     if (pos + got >= end) break;
     const uint64_t step = got > overlap ? got - overlap : got;
@@ -2031,16 +2034,24 @@ ArchiverResult open_disguised(ArchiverArchive *archive, const std::string &path,
     for (size_t i = tail.size(); i > 0; --i) remember_hit(hits, tail[i - 1].kind, tail[i - 1].offset);
   }
 
-  if (hits.empty()) {
-    archive->message = "no archive in this file";
-    return ARCHIVER_ERR_UNSUPPORTED;
-  }
   for (const SliceHit &hit : hits) {
     ArchiverResult result = try_listed_archive(archive, hit.kind, path, hit.offset, password);
     if (result == ARCHIVER_OK) return ARCHIVER_OK;
     if (result == ARCHIVER_ERR_PASSWORD_REQUIRED || result == ARCHIVER_ERR_PASSWORD ||
         result == ARCHIVER_ERR_PATH) {
       return result;
+    }
+  }
+  // NSIS stores its own container after a PE stub, rather than a ZIP/7z/RAR signature.
+  // Let its parser validate the bounded candidate even when the file has been renamed.
+  if (head_n >= 2 && head[0] == 'M' && head[1] == 'Z') {
+    GUID nsis;
+    if (find_handler(archive->engine, "Nsis", nsis)) {
+      close_open_archive(archive);
+      ArchiverResult result = open_with(archive->engine, nsis, path, password, archive->archive,
+          archive->stream, archive->message, 0, &archive->volumes, 8ull << 20);
+      if (result == ARCHIVER_OK) return result;
+      if (result == ARCHIVER_ERR_PASSWORD || result == ARCHIVER_ERR_PASSWORD_REQUIRED) return result;
     }
   }
   archive->message = "no archive in this file";
@@ -2539,8 +2550,13 @@ ArchiverResult archiver_open_with_passwords(const char *archive_path, const char
 }
 
 ArchiverResult archiver_test(ArchiverArchive *archive, const char *password) {
+  return archiver_test_with_progress(archive, password, nullptr, nullptr);
+}
+
+ArchiverResult archiver_test_with_progress(ArchiverArchive *archive, const char *password,
+    ArchiverProgressCallback progress, void *user) {
   if (!archive) return ARCHIVER_ERR_ARGUMENT;
-  if (archive->native_lz4) return process_lz4(archive, nullptr, nullptr, nullptr);
+  if (archive->native_lz4) return process_lz4(archive, nullptr, progress, user);
   if (!archive->archive) {
     if (archive->message.empty()) archive->message = "archive is not open";
     return ARCHIVER_ERR_FORMAT;
@@ -2555,6 +2571,10 @@ ArchiverResult archiver_test(ArchiverArchive *archive, const char *password) {
   ExtractCtx ctx;
   ctx.password = &pw;
   ctx.message = &archive->message;
+  ctx.progress = progress;
+  ctx.progress_user = user;
+  ctx.testing = true;
+  if (!ctx.report_progress()) return ARCHIVER_ERR_CANCELLED;
   ExtractCallback *callback = new ExtractCallback();
   callback->archive = archive->archive;
   callback->ctx = &ctx;
