@@ -11,8 +11,8 @@ android {
         applicationId = "app.localarchiver"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6002
-        versionName = "0.6.0-android.2"
+        versionCode = 6003
+        versionName = "0.6.0-android.3"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")

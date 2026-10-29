@@ -153,10 +153,10 @@ class ReliabilityTest {
             val until = System.currentTimeMillis() + 10000
             while (System.currentTimeMillis() < until && inst.uiAutomation.rootInActiveWindow?.findAccessibilityNodeInfosByText(file.name)?.isEmpty() != false) Thread.sleep(100)
             onView(withText(file.name)).perform(longClick())
-            onView(withText("删除")).inRoot(isDialog()).perform(click())
+            onView(withText("删除")).perform(click())
             awaitDeleteConfirmation()
             onView(withId(android.R.id.button2)).inRoot(isDialog()).perform(click()); assertTrue(file.exists())
-            onView(withText(file.name)).perform(longClick()); onView(withText("删除")).inRoot(isDialog()).perform(click())
+            onView(withText("删除")).perform(click())
             awaitDeleteConfirmation()
             onView(withId(android.R.id.button1)).inRoot(isDialog()).perform(click())
             val end = System.currentTimeMillis() + 10000

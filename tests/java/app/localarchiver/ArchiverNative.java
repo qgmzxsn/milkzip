@@ -10,6 +10,7 @@ public class ArchiverNative {
     public native String listArchive(String archive, String engine, char[] password);
     public native String extractArchive(String archive, String dest, String engine, char[] password);
 
+    public native void checkThreadCallbacks(Object listener);
     public native String nativeExtractNested(String archive, String dest, String engine, char[][] passwords,
         int depth, long bytes, boolean keep, boolean ask, Object listener);
     public static class Listener {
@@ -23,6 +24,15 @@ public class ArchiverNative {
         System.load(args[0]);
         System.load(args[1]);
         ArchiverNative api = new ArchiverNative();
+        Listener probe = new Listener();
+        api.checkThreadCallbacks(probe);
+        try {
+            api.checkThreadCallbacks(new Listener() {
+                @Override public boolean onProgress(long done, long total) { throw new IllegalStateException("callback failure"); }
+            });
+            throw new AssertionError("callback exception was lost");
+        } catch (IllegalStateException expected) { }
+        if (probe.calls == 0) throw new AssertionError("native thread callback missing");
         // Construct Unicode paths in Java: some Windows Java launchers convert
         // command-line arguments through the legacy system code page.
         String archive = Path.of(args[3], "压缩😀.zip").toString();
@@ -60,6 +70,9 @@ public class ArchiverNative {
                 32, 64L << 20, true, false, listener);
             if (!result.contains("\"code\":0") || listener.calls == 0) throw new AssertionError(result);
         }
+        result = api.nativeExtractNested(Path.of(args[3], "zipsc-split.7z.001").toString(), dest + "-zipsc", args[2],
+            new char[][] { "batch-secret".toCharArray() }, 32, 64L << 20, true, false, new Listener());
+        if (!result.contains("\"code\":0") || Files.size(Path.of(dest + "-zipsc", "payload.bin")) != 131072) throw new AssertionError(result);
         System.out.println("JNI Unicode paths, listing, and password checks passed");
     }
 }

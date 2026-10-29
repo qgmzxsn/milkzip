@@ -10,6 +10,10 @@
 #include <algorithm>
 #include <map>
 #include <memory>
+#include <mutex>
+#include <thread>
+#include <new>
+#include <exception>
 
 namespace {
 
@@ -145,10 +149,41 @@ struct Secrets {
   }
 };
 struct AndroidCallbacks {
-  JNIEnv *env;
+  JavaVM *vm = nullptr;
+  std::recursive_mutex mutex;
+  jthrowable error = nullptr;
+  struct Environment {
+    JavaVM *vm; JNIEnv *env = nullptr; bool attached = false;
+    explicit Environment(JavaVM *v) : vm(v) {
+      if (!vm) return;
+      if (vm->GetEnv(reinterpret_cast<void **>(&env), JNI_VERSION_1_6) == JNI_EDETACHED) {
+#if defined(__ANDROID__)
+        attached = vm->AttachCurrentThread(&env, nullptr) == JNI_OK;
+#else
+        attached = vm->AttachCurrentThread(reinterpret_cast<void **>(&env), nullptr) == JNI_OK;
+#endif
+      }
+    }
+    ~Environment() { if (attached) vm->DetachCurrentThread(); }
+  };
+  bool capture(JNIEnv *env) {
+    if (env && env->ExceptionCheck()) {
+      jthrowable local = env->ExceptionOccurred(); env->ExceptionClear();
+      if (!error) error = static_cast<jthrowable>(env->NewGlobalRef(local));
+      env->DeleteLocalRef(local);
+    }
+    return !env || error;
+  }
+  bool rethrow(JNIEnv *env) {
+    std::lock_guard<std::recursive_mutex> lock(mutex);
+    if (error) env->Throw(error);
+    return env->ExceptionCheck();
+  }
   jobject object;
   jmethodID progress_id = nullptr, password_id = nullptr, accepted_id = nullptr, choose_id = nullptr;
-  AndroidCallbacks(JNIEnv *e, jobject o) : env(e), object(o) {
+  AndroidCallbacks(JNIEnv *env, jobject o) : object(nullptr) {
+    env->GetJavaVM(&vm);
+    if (o) object = env->NewGlobalRef(o);
     if (!o) return;
     jclass cls = env->GetObjectClass(o);
     progress_id = env->GetMethodID(cls, "onProgress", "(JJ)Z");
@@ -157,32 +192,45 @@ struct AndroidCallbacks {
     choose_id = env->GetMethodID(cls, "onChoose", "([Ljava/lang/String;)I");
     env->DeleteLocalRef(cls);
   }
+  ~AndroidCallbacks() {
+    Environment scope(vm);
+    if (scope.env) { if (object) scope.env->DeleteGlobalRef(object); if (error) scope.env->DeleteGlobalRef(error); }
+  }
   bool cancelled(uint64_t done = 0, uint64_t total = 0) {
-    if (env->ExceptionCheck()) return true;
+    std::lock_guard<std::recursive_mutex> lock(mutex); Environment scope(vm); JNIEnv *env = scope.env;
+    if (capture(env)) return true;
     if (!object) return false;
-    return env->CallBooleanMethod(object, progress_id, static_cast<jlong>(done), static_cast<jlong>(total)) || env->ExceptionCheck();
+    const bool stop = env->CallBooleanMethod(object, progress_id, static_cast<jlong>(done), static_cast<jlong>(total));
+    return capture(env) || stop;
   }
   std::string ask(const char *path, bool rejected, bool &cancelled) {
+    std::lock_guard<std::recursive_mutex> lock(mutex); Environment scope(vm); JNIEnv *env = scope.env;
+    if (capture(env)) { cancelled = true; return {}; }
     jstring name = to_jstring(env, path);
     auto chars = static_cast<jcharArray>(env->CallObjectMethod(object, password_id, name, static_cast<jboolean>(rejected)));
     env->DeleteLocalRef(name);
-    if (env->ExceptionCheck() || !chars) { cancelled = true; return {}; }
+    if (capture(env) || !chars) { cancelled = true; return {}; }
     std::string out = from_chars(env, chars);
     env->DeleteLocalRef(chars);
     return out;
   }
   void accepted(const char *value) {
+    std::lock_guard<std::recursive_mutex> lock(mutex); Environment scope(vm); JNIEnv *env = scope.env;
+    if (capture(env)) return;
     const std::u16string text = archiver::utf8_to_utf16(value);
     jcharArray chars = env->NewCharArray(static_cast<jsize>(text.size()));
+    if (!chars || capture(env)) return;
     env->SetCharArrayRegion(chars, 0, static_cast<jsize>(text.size()), reinterpret_cast<const jchar *>(text.data()));
     env->CallVoidMethod(object, accepted_id, chars);
-    if (!env->ExceptionCheck()) {
+    if (!capture(env)) {
       std::vector<jchar> zero(text.size());
       env->SetCharArrayRegion(chars, 0, static_cast<jsize>(zero.size()), zero.data());
     }
     env->DeleteLocalRef(chars);
   }
   int choose(const char *const *paths, uint32_t count) {
+    std::lock_guard<std::recursive_mutex> lock(mutex); Environment scope(vm); JNIEnv *env = scope.env;
+    if (capture(env)) return -2;
     jclass string_class = env->FindClass("java/lang/String");
     jobjectArray items = env->NewObjectArray(static_cast<jsize>(count), string_class, nullptr);
     env->DeleteLocalRef(string_class);
@@ -192,7 +240,7 @@ struct AndroidCallbacks {
     }
     const int result = env->CallIntMethod(object, choose_id, items);
     env->DeleteLocalRef(items);
-    return env->ExceptionCheck() ? -2 : result;
+    return capture(env) ? -2 : result;
   }
 };
 int android_progress(uint64_t done, uint64_t total, void *user) {
@@ -229,7 +277,7 @@ ArchiverResult authenticated_open(const std::string &path, const std::string &en
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_app_localarchiver_ArchiverNative_nativeList(JNIEnv *env, jobject, jstring archive_path,
-    jstring engine_path, jobjectArray passwords, jstring prefix_string, jobject listener) {
+    jstring engine_path, jobjectArray passwords, jstring prefix_string, jobject listener) try {
   const std::string path = from_jstring(env, archive_path), engine = from_jstring(env, engine_path);
   const std::string prefix = from_jstring(env, prefix_string);
   Secrets book; book.read(env, passwords);
@@ -237,6 +285,7 @@ Java_app_localarchiver_ArchiverNative_nativeList(JNIEnv *env, jobject, jstring a
   if (env->ExceptionCheck()) return nullptr;
   ArchiverResult code = authenticated_open(path, engine, book, callbacks, archive);
   if (env->ExceptionCheck()) return nullptr;
+  if (callbacks.rethrow(env)) return nullptr;
   if (code != ARCHIVER_OK) return to_jstring(env, result_json(code, archiver_message(archive.handle)));
   uint32_t count = 0; archiver_entry_count(archive.handle, &count);
   struct Row { std::string path; bool directory = false, symlink = false; uint64_t size = 0, packed = 0; int64_t modified = -1; };
@@ -276,13 +325,19 @@ Java_app_localarchiver_ArchiverNative_nativeList(JNIEnv *env, jobject, jstring a
   items += "],\"count\":" + std::to_string(count) + ",\"size\":" + std::to_string(size) +
       ",\"packed\":" + std::to_string(packed) + ",\"truncated\":" + (truncated ? "true" : "false");
   if (archive.typed && callbacks.object) callbacks.accepted(archive.password.c_str());
-  return env->ExceptionCheck() ? nullptr : to_jstring(env, result_json(ARCHIVER_OK, {}, items));
+  return callbacks.rethrow(env) ? nullptr : to_jstring(env, result_json(ARCHIVER_OK, {}, items));
+} catch (const std::bad_alloc &) {
+  return env->ExceptionCheck() ? nullptr : env->NewStringUTF("{\"code\":12,\"detail\":\"decoder memory allocation failed\"}");
+} catch (const std::exception &) {
+  return env->ExceptionCheck() ? nullptr : env->NewStringUTF("{\"code\":4,\"detail\":\"native decoder exception\"}");
+} catch (...) {
+  return env->ExceptionCheck() ? nullptr : env->NewStringUTF("{\"code\":4,\"detail\":\"unknown native decoder exception\"}");
 }
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_app_localarchiver_ArchiverNative_nativeExtractNested(JNIEnv *env, jobject, jstring archive_path,
     jstring dest_path, jstring engine_path, jobjectArray passwords, jint depth, jlong bytes,
-    jboolean keep, jboolean ask, jobject listener) {
+    jboolean keep, jboolean ask, jobject listener) try {
   const std::string path = from_jstring(env, archive_path), dest = from_jstring(env, dest_path), engine = from_jstring(env, engine_path);
   Secrets book; book.read(env, passwords); AndroidCallbacks callbacks(env, listener);
   if (env->ExceptionCheck()) return nullptr;
@@ -303,12 +358,18 @@ Java_app_localarchiver_ArchiverNative_nativeExtractNested(JNIEnv *env, jobject, 
   const ArchiverResult code = archiver_extract_nested_ex(path.c_str(), engine.c_str(), dest.c_str(),
       book.pointers.data(), static_cast<uint32_t>(book.pointers.size()), &options,
       android_progress, &callbacks, message.data(), static_cast<uint32_t>(message.size()));
-  return env->ExceptionCheck() ? nullptr : to_jstring(env, result_json(code, message.data()));
+  return callbacks.rethrow(env) ? nullptr : to_jstring(env, result_json(code, message.data()));
+} catch (const std::bad_alloc &) {
+  return env->ExceptionCheck() ? nullptr : env->NewStringUTF("{\"code\":12,\"detail\":\"decoder memory allocation failed\"}");
+} catch (const std::exception &) {
+  return env->ExceptionCheck() ? nullptr : env->NewStringUTF("{\"code\":4,\"detail\":\"native decoder exception\"}");
+} catch (...) {
+  return env->ExceptionCheck() ? nullptr : env->NewStringUTF("{\"code\":4,\"detail\":\"unknown native decoder exception\"}");
 }
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_app_localarchiver_ArchiverNative_nativeTest(JNIEnv *env, jobject, jstring archive_path,
-    jstring engine_path, jobjectArray passwords, jobject listener) {
+    jstring engine_path, jobjectArray passwords, jobject listener) try {
   const std::string path = from_jstring(env, archive_path), engine = from_jstring(env, engine_path);
   Secrets book; book.read(env, passwords); AndroidCallbacks callbacks(env, listener); AuthArchive archive;
   if (env->ExceptionCheck()) return nullptr;
@@ -316,5 +377,27 @@ Java_app_localarchiver_ArchiverNative_nativeTest(JNIEnv *env, jobject, jstring a
   if (code == ARCHIVER_OK) code = archiver_test_with_progress(archive.handle,
       archive.password.empty() ? nullptr : archive.password.c_str(), android_progress, &callbacks);
   if (code == ARCHIVER_OK && archive.typed && listener) callbacks.accepted(archive.password.c_str());
-  return env->ExceptionCheck() ? nullptr : to_jstring(env, result_json(code, archiver_message(archive.handle)));
+  return callbacks.rethrow(env) ? nullptr : to_jstring(env, result_json(code, archiver_message(archive.handle)));
+} catch (const std::bad_alloc &) {
+  return env->ExceptionCheck() ? nullptr : env->NewStringUTF("{\"code\":12,\"detail\":\"decoder memory allocation failed\"}");
+} catch (const std::exception &) {
+  return env->ExceptionCheck() ? nullptr : env->NewStringUTF("{\"code\":4,\"detail\":\"native decoder exception\"}");
+} catch (...) {
+  return env->ExceptionCheck() ? nullptr : env->NewStringUTF("{\"code\":4,\"detail\":\"unknown native decoder exception\"}");
 }
+
+#if defined(ARCHIVER_JNI_TEST_CALLBACKS)
+// Only present in the host test library, never in the Android APK.
+extern "C" JNIEXPORT void JNICALL
+Java_app_localarchiver_ArchiverNative_checkThreadCallbacks(JNIEnv *env, jobject, jobject listener) {
+  AndroidCallbacks callbacks(env, listener);
+  std::thread worker([&] {
+    callbacks.cancelled(1, 2);
+    bool stopped = false;
+    std::string password = callbacks.ask("thread.zipSC", false, stopped);
+    callbacks.accepted(password.c_str()); wipe(password);
+    const char *paths[] = {"one.zip", "two.zip"}; callbacks.choose(paths, 2);
+  });
+  worker.join(); callbacks.rethrow(env);
+}
+#endif

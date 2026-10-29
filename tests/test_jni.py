@@ -46,6 +46,10 @@ with tempfile.TemporaryDirectory(prefix="jni-", dir=library.parent) as directory
         subprocess.run([seven, "a", "-t7z", "-m0=BCJ2", "-m1=LZMA2", "-m2=LZMA2", "-m3=LZMA2",
             "-mb0:1", "-mb0s1:2", "-mb0s2:3", str(base / "threaded.7z"), str(machine)],
             check=True, capture_output=True, timeout=60)
+    fixtures = Path(__file__).resolve().parent.parent / "apps/android/app/src/androidTest/assets/fixtures"
+    for name in ["zipsc-split.7z.001", "zipsc-split.7z.002"]:
+        import shutil
+        shutil.copy(fixtures / name, base / name)
     subprocess.run(
         [java, "-Xcheck:jni", "-cp", str(base), "app.localarchiver.ArchiverNative",
          str(library), str(jni), str(engine), str(base), suffix],

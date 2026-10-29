@@ -17,7 +17,7 @@ class Storage(private val context: Context) {
     val shared: File get() = Environment.getExternalStorageDirectory()
     val allFiles: Boolean get() = if (Build.VERSION.SDK_INT >= 30) Environment.isExternalStorageManager() else
         context.checkSelfPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE) == android.content.pm.PackageManager.PERMISSION_GRANTED
-    fun fromFile(file: File) = Node(file.absolutePath, file.name.ifEmpty { "内部存储" }, file.isDirectory, file.length(), file.lastModified())
+    fun fromFile(file: File) = Node(file.absolutePath, file.name.ifEmpty { "内部存储" }, file.isDirectory, file.length(), file.lastModified(), parent = file.absoluteFile.parent)
     fun fromUri(uri: Uri, tree: String? = null): Node {
         if (uri.scheme == "file") return fromFile(File(requireNotNull(uri.path)))
         val columns = arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE,
@@ -52,16 +52,13 @@ class Storage(private val context: Context) {
         return buildList {
             context.contentResolver.query(uri, columns, null, null, null)?.use { c ->
                 while (c.moveToNext()) add(Node(DocumentsContract.buildDocumentUriUsingTree(tree, c.getString(0)).toString(), c.getString(1) ?: "file",
-                    c.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR, if (c.isNull(3)) -1 else c.getLong(3), if (c.isNull(4)) 0 else c.getLong(4), node.tree))
+                    c.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR, if (c.isNull(3)) -1 else c.getLong(3), if (c.isNull(4)) 0 else c.getLong(4), node.tree, node.location))
             } ?: throw IOException("无法读取授权目录")
         }
     }
     fun input(node: Node): InputStream = if (node.isDocument) context.contentResolver.openInputStream(Uri.parse(node.location))
         ?: throw IOException("无法读取 ${node.name}") else node.file.inputStream()
-    fun related(source: Node, siblings: List<Node>): List<Node> {
-        val group = Rules.volumeGroup(source.name) ?: return listOf(source)
-        return (siblings.filter { !it.directory && Rules.volumeGroup(it.name) == group } + source).distinctBy { it.location }
-    }
+    fun related(source: Node, siblings: List<Node>): List<Node> = ArchivePlan.companions(source, siblings)
     fun available(file: File) = file.usableSpace
     fun checkSpace(file: File, size: Long) {
         if (size > 0 && size + (16L shl 20) > file.usableSpace) throw IOException("存储空间不足，需要约 ${Rules.size(size)}")
@@ -98,7 +95,9 @@ class Storage(private val context: Context) {
         throw IOException("同名结果过多")
     }
     fun export(directory: File, target: Uri, cancelled: () -> Boolean, progress: (String, Long, Long) -> Unit): Uri {
-        val parent = treeRoot(target)
+        return exportToFolder(directory, treeRoot(target), cancelled, progress)
+    }
+    fun exportToFolder(directory: File, parent: Node, cancelled: () -> Boolean, progress: (String, Long, Long) -> Unit): Uri {
         val existing = children(parent).map { it.name }.toSet()
         var name = directory.name; var index = 1
         while (name in existing) { name = "${directory.name} (${index++})" }

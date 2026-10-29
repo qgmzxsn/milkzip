@@ -20,9 +20,10 @@ import java.util.concurrent.atomic.AtomicBoolean
 internal data class Job(
     val kind: String, val sources: List<Node>, val siblings: List<Node> = sources,
     val prefix: String = "", val staged: File? = null, val settings: ExtractSettings = ExtractSettings(),
-    val parent: File? = null, val name: String = "", val exportTree: String? = null
+    val parent: File? = null, val name: String = "", val exportTree: String? = null,
+    val sameDirectory: Boolean = false, val initialPassword: CharArray? = null
 )
-data class TaskRecord(val id: String, val title: String, val time: Long, val code: Int, val detail: String, val output: String?)
+data class TaskRecord(val id: String, val title: String, val time: Long, val code: Int, val detail: String, val output: String?, val outputs: List<String> = emptyList(), val diagnostic: String? = null)
 data class OpenFailure(val recordId: String, val source: Node)
 data class TaskState(val title: String, val phase: String, val done: Long = 0, val total: Long = 0, val waiting: Boolean = false)
 data class Prompt(val id: String = UUID.randomUUID().toString(), val path: String = "", val rejected: Boolean = false, val branches: List<String>? = null)
@@ -46,6 +47,7 @@ object Tasks {
     @Volatile private var future: CompletableFuture<PromptReply>? = null
     private var running = false
     private var lastNotify = 0L
+    @Volatile private var taskPrefix = ""
     private val sessionPasswords = mutableListOf<CharArray>()
     private var typedPassword: CharArray? = null
     private var rememberTyped = false
@@ -56,18 +58,24 @@ object Tasks {
         records = runCatching {
             val file = File(context.filesDir, "task-history.json")
             if (!file.exists()) emptyList() else JSONArray(file.readText()).let { a -> (0 until a.length()).map {
-                a.getJSONObject(it).let { o -> TaskRecord(o.getString("id"), o.getString("title"), o.getLong("time"), o.getInt("code"), o.optString("detail"), o.optString("output").ifEmpty { null }) }
+                a.getJSONObject(it).let { o -> TaskRecord(o.getString("id"), o.getString("title"), o.getLong("time"), o.getInt("code"), o.optString("detail"), o.optString("output").ifEmpty { null }, o.optJSONArray("outputs")?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList(), o.optString("diagnostic").ifEmpty { null }) }
             } }
         }.getOrDefault(emptyList())
         // Cached inputs have no live owner after a process restart; results are outside cache.
         File(context.cacheDir, "jobs").listFiles()?.forEach { it.deleteRecursively() }
         File(context.cacheDir, "share").listFiles()?.filter { System.currentTimeMillis() - it.lastModified() > TimeUnit.DAYS.toMillis(1) }?.forEach { it.delete() }
     }
+    private fun retirePage() {
+        val cached = page?.staged
+        page = null; pageVersion++
+        val oldJob = cached?.parentFile?.takeIf { it.name == "input" }?.parentFile
+        if (oldJob?.parentFile == File(context.cacheDir, "jobs")) oldJob.deleteRecursively()
+    }
     private fun publish() { main.post { listeners.toList().forEach { it() } } }
     internal fun submit(job: Job): Boolean {
         init(context)
         if (active != null) return false
-        active = job; cancelled.set(false); promptsStopped.set(false); warnings.clear()
+        active = job; taskPrefix = ""; cancelled.set(false); promptsStopped.set(false); warnings.clear()
         state = TaskState(title(job), "准备中"); publish()
         try { ContextCompat.startForegroundService(context, Intent(context, TaskService::class.java)) }
         catch (error: Exception) { active = null; state = null; publish(); throw error }
@@ -75,6 +83,7 @@ object Tasks {
     }
     private fun title(job: Job): String = when (job.kind) {
         "list" -> "打开 ${job.sources.first().name}"; "extract" -> "解压 ${job.sources.first().name}"
+        "extractBatch" -> "批量解压 ${ArchivePlan.roots(job.sources, job.siblings).size} 组"
         "test" -> "检查 ${job.sources.first().name}"; "zip" -> "打包 ${job.sources.size} 项"; "export" -> "导出结果"; "delete" -> "删除 ${job.sources.size} 项"; else -> job.kind
     }
     fun cancel() { cancelled.set(true); state = state?.copy(phase = "正在取消…"); future?.complete(PromptReply()); publish() }
@@ -85,7 +94,7 @@ object Tasks {
     fun clearHistory() { records = emptyList(); saveRecords(); publish() }
     @Synchronized private fun saveRecords() = runCatching {
         val a = JSONArray()
-        records.forEach { a.put(JSONObject().put("id", it.id).put("title", it.title).put("time", it.time).put("code", it.code).put("detail", it.detail).put("output", it.output ?: "")) }
+        records.forEach { a.put(JSONObject().put("id", it.id).put("title", it.title).put("time", it.time).put("code", it.code).put("detail", it.detail).put("output", it.output ?: "").put("outputs", JSONArray(it.outputs)).put("diagnostic", it.diagnostic ?: "")) }
         val file = android.util.AtomicFile(File(context.filesDir, "task-history.json"))
         val stream = file.startWrite()
         try { stream.write(a.toString().toByteArray()); file.finishWrite(stream) } catch (error: Exception) { file.failWrite(stream) }
@@ -113,13 +122,17 @@ object Tasks {
     }
     private fun passwords(): Array<CharArray> {
         val saved = try { PasswordBook(context).read() } catch (error: Exception) { warnings.add("密码本无法读取，请在密码本页面检查；可以手动输入密码。"); emptyList() }
-        return (saved.map { it.toCharArray() } + sessionPasswords.map { it.copyOf() }).take(64).toTypedArray()
+        val result = mutableListOf<CharArray>()
+        for (value in sessionPasswords.asReversed().map { it.copyOf() } + saved.map { it.toCharArray() }) {
+            if (result.size < 64 && result.none { it.contentEquals(value) }) result.add(value) else value.fill('\u0000')
+        }
+        return result.toTypedArray()
     }
     private val callbacks = object : NativeCallbacks {
         override fun onProgress(done: Long, total: Long): Boolean {
             if (cancelled.get()) return true
             // Exceptions cannot escape a native callback with a pending JNI exception.
-            runCatching { progress(if (active?.kind == "test") "检查数据完整性" else "处理压缩包", done, total) }
+            runCatching { progress(taskPrefix + if (active?.kind == "test") "检查数据完整性" else "处理压缩包", done, total) }
             return cancelled.get()
         }
         override fun onPassword(path: String, rejected: Boolean): CharArray? {
@@ -130,6 +143,7 @@ object Tasks {
         override fun onPasswordAccepted(password: CharArray) {
             if (password.isEmpty()) return
             if (sessionPasswords.none { it.contentEquals(password) }) sessionPasswords.add(password.copyOf())
+            while (sessionPasswords.size > 64) sessionPasswords.removeAt(0).fill('\u0000')
             if (rememberTyped && typedPassword?.contentEquals(password) == true) {
                 try { PasswordBook(context).addVerified(String(password)) }
                 catch (error: Exception) { warnings.add(error.message ?: "密码保存失败") }
@@ -145,14 +159,91 @@ object Tasks {
         worker.execute {
             val storage = Storage(context); val scratch = storage.jobDirectory()
             var code = 0; var detail = ""; var output: File? = null; var keepScratch = false
+            var outputs = emptyList<String>(); var diagnostic: String? = null
+            var batchPosition = ""
+            fun extract(source: Node, name: String): Pair<Int, String> {
+                var resultCode = 0; var message = ""; var destination: File? = null; var inputDirectory: File? = null
+                try {
+                    val cached = job.staged?.takeIf { job.sources.size == 1 && it.exists() }
+                    if (source.isDocument && cached == null) inputDirectory = File(scratch, "source-${UUID.randomUUID()}").apply { mkdirs() }
+                    val file = cached ?: storage.stage(source, job.siblings, inputDirectory ?: scratch, cancelled::get) { phase, n, total -> progress(batchPosition + phase, n, total) }
+                    val parent = job.parent ?: if (job.sameDirectory && !source.isDocument && source.file.parentFile?.canWrite() == true) source.file.parentFile!! else storage.results
+                    destination = storage.uniqueDirectory(parent, name)
+                    if (output == null) output = destination
+                    outputs = outputs + destination.absolutePath
+                    val remaining = (destination.usableSpace - (32L shl 20)).coerceAtLeast(0)
+                    require(remaining > 0) { "存储空间不足" }
+                    val arguments = Bundle().apply {
+                        putString("kind", "extract"); putString("path", file.path); putString("dest", destination.path)
+                        putInt("depth", if (job.settings.recursive) job.settings.depth else 1)
+                        putLong("bytes", minOf(job.settings.maxBytes, remaining)); putBoolean("keep", job.settings.keep); putBoolean("ask", job.settings.ask)
+                    }
+                    promptsStopped.set(false)
+                    progress(batchPosition + "读取 ${source.name}", force = true)
+                    val response = NativeWorker.run(context, arguments, passwords(), File(scratch, "native-response.json"), callbacks, cancelled::get) { promptsStopped.set(true); future?.complete(PromptReply()) }
+                    val json = JSONObject(response); resultCode = json.getInt("code"); message = json.optString("detail")
+                    if (resultCode in listOf(0, 13) && job.exportTree != null) {
+                        val uri = storage.export(destination, android.net.Uri.parse(job.exportTree), cancelled::get) { phase, n, total -> progress(batchPosition + phase, n, total) }
+                        message += "\n已保存到：$uri"
+                    }
+                    if (resultCode in listOf(0, 13) && job.sameDirectory && source.isDocument && source.parent != null && source.tree != null) {
+                        val uri = storage.exportToFolder(destination, storage.fromUri(android.net.Uri.parse(source.parent), source.tree), cancelled::get) { phase, n, total -> progress(batchPosition + phase, n, total) }
+                        message += "\n已保存到：$uri"
+                    }
+                    if (resultCode == 0 && job.settings.deleteSource && !cancelled.get()) {
+                        try {
+                            val originals = storage.related(source, job.siblings)
+                            originals.forEach(storage::checkDeletable)
+                            for (original in originals) storage.delete(original, cancelled::get) { progress(batchPosition + "删除原包 $it") }
+                            if (page?.source?.location in originals.map { it.location }) retirePage()
+                            message += "\n已删除原压缩包（${originals.size} 个文件）"
+                        } catch (error: CancellationException) { throw error }
+                        catch (error: Exception) { resultCode = 13; message += "\n解压成功；删除原包未全部成功：${error.message}" }
+                    }
+                } catch (_: CancellationException) { resultCode = 9; message += "\n已取消，未删除尚未处理的原包。" }
+                catch (error: Throwable) {
+                    resultCode = if (cancelled.get()) 9 else if (error is NativeWorkerException) 4 else 2
+                    if (error is NativeWorkerException) diagnostic = error.diagnostic?.path ?: diagnostic
+                    message += "\n" + (error.message ?: error.javaClass.simpleName)
+                } finally { inputDirectory?.deleteRecursively() }
+                if (job.kind == "extractBatch" && resultCode == 8 && destination?.listFiles()?.isEmpty() == true) {
+                    destination.delete(); outputs = outputs.filter { it != destination.absolutePath }; destination = null
+                    resultCode = 14; message = "跳过：文件不能识别为可解压的压缩包，或该格式尚不支持。"
+                }
+                destination?.let { message += "\n结果目录：${it.path}" }
+                return resultCode to message.trim()
+            }
             try {
+                job.initialPassword?.let { value ->
+                    if (value.isNotEmpty()) sessionPasswords.add(value.copyOf())
+                    value.fill('\u0000')
+                }
                 when (job.kind) {
+                    "extract", "extractBatch" -> {
+                        val roots = if (job.kind == "extract") job.sources.take(1) else ArchivePlan.roots(job.sources, job.siblings)
+                        require(roots.isNotEmpty()) { "请选择压缩包文件" }
+                        var completed = 0; var failed = 0; var partial = 0; var skipped = 0; var firstFailure = 3
+                        val reports = mutableListOf<String>()
+                        for ((index, source) in roots.withIndex()) {
+                            if (cancelled.get()) { code = 9; break }
+                            batchPosition = if (job.kind == "extractBatch") "${index + 1}/${roots.size} · " else ""
+                            taskPrefix = batchPosition
+                            val result = extract(source, if (roots.size == 1 && job.name.isNotEmpty()) job.name else Rules.resultName(source.name))
+                            reports.add("${source.name} · ${Rules.resultLabel(result.first)}\n${result.second}")
+                            when (result.first) { 0 -> completed++; 13 -> partial++; 14 -> skipped++; else -> { if (failed == 0) firstFailure = result.first; failed++ } }
+                            if (result.first == 9) { code = 9; break }
+                            if (job.kind == "extract") code = result.first
+                        }
+                        if (job.kind == "extractBatch" && code != 9) code = if (failed == 0 && partial == 0) if (completed == 0 && skipped > 0) 8 else 0 else if (completed > 0 || partial > 0) 13 else firstFailure
+                        output = outputs.firstOrNull()?.let(::File)
+                        detail = if (job.kind == "extractBatch") "共 ${roots.size} 组：完成 $completed，部分完成 $partial，失败 $failed，跳过 $skipped\n\n" + reports.joinToString("\n\n") else reports.joinToString("\n")
+                    }
                     "delete" -> {
-                        job.sources.forEach(storage::checkDeletable)
+                        ArchivePlan.deletionRoots(job.sources).forEach(storage::checkDeletable)
                         var done = 0
                         val failures = mutableListOf<String>()
                         try {
-                            for (node in job.sources.distinctBy { it.location }) {
+                            for (node in ArchivePlan.deletionRoots(job.sources)) {
                                 try {
                                     storage.delete(node, cancelled::get) { name -> progress("删除 $name", done.toLong(), job.sources.size.toLong()) }
                                     done++
@@ -163,25 +254,15 @@ object Tasks {
                             code = if (failures.isEmpty()) 0 else if (done > 0) 13 else 2
                         } finally {
                             // Retire the cached browser view even if a directory was only partly deleted.
-                            page = null; pageVersion++
+                            retirePage()
                         }
                     }
-                    "list", "test", "extract" -> {
+                    "list", "test" -> {
                         val source = job.sources.first()
                         val file = job.staged?.takeIf { it.exists() } ?: storage.stage(source, job.siblings, scratch, cancelled::get) { phase, n, total -> progress(phase, n, total) }
                         progress("读取压缩包", force = true)
                         val arguments = Bundle().apply {
                             putString("kind", job.kind); putString("path", file.absolutePath); putString("prefix", job.prefix)
-                        }
-                        if (job.kind == "extract") {
-                            val parent = job.parent ?: storage.results
-                            output = storage.uniqueDirectory(parent, job.name.ifEmpty { Rules.resultName(source.name) })
-                            val remaining = (output!!.usableSpace - (32L shl 20)).coerceAtLeast(0)
-                            require(remaining > 0) { "存储空间不足" }
-                            arguments.putString("dest", output!!.absolutePath)
-                            arguments.putInt("depth", if (job.settings.recursive) job.settings.depth else 1)
-                            arguments.putLong("bytes", minOf(job.settings.maxBytes, remaining))
-                            arguments.putBoolean("keep", job.settings.keep); arguments.putBoolean("ask", job.settings.ask)
                         }
                         val response = NativeWorker.run(context, arguments, passwords(), File(scratch, "native-response.json"), callbacks, cancelled::get) { promptsStopped.set(true); future?.complete(PromptReply()) }
                         val json = JSONObject(response); code = json.getInt("code"); detail = json.optString("detail")
@@ -210,7 +291,7 @@ object Tasks {
                     }
                     "export" -> output = job.sources.first().file
                 }
-                if (output != null && job.exportTree != null && !cancelled.get() && code in listOf(0, 13)) {
+                if (job.kind !in listOf("extract", "extractBatch") && output != null && job.exportTree != null && !cancelled.get() && code in listOf(0, 13)) {
                     progress("保存到选定文件夹", force = true)
                     val exported = storage.export(output!!, android.net.Uri.parse(job.exportTree), cancelled::get) { phase, n, total -> progress(phase, n, total) }
                     detail += "\n已保存到：$exported\n本地结果：${output!!.absolutePath}"
@@ -223,9 +304,9 @@ object Tasks {
                 sessionPasswords.forEach { it.fill('\u0000') }; sessionPasswords.clear()
                 typedPassword?.fill('\u0000'); typedPassword = null; rememberTyped = false
                 if (!keepScratch) scratch.deleteRecursively()
-                if (output != null) detail += "\n结果目录：${output!!.absolutePath}"
+                if (output != null && job.kind !in listOf("extract", "extractBatch")) detail += "\n结果目录：${output!!.absolutePath}"
                 if (warnings.isNotEmpty()) detail += "\n" + warnings.distinct().joinToString("\n")
-                val record = TaskRecord(UUID.randomUUID().toString(), title(job), System.currentTimeMillis(), code, detail.trim().take(65000), output?.absolutePath)
+                val record = TaskRecord(UUID.randomUUID().toString(), title(job), System.currentTimeMillis(), code, detail.trim().take(65000), output?.absolutePath, outputs, diagnostic)
                 if (job.kind == "list" && code in listOf(3, 8)) openFailure = OpenFailure(record.id, job.sources.first())
                 records = (listOf(record) + records).take(50); saveRecords()
                 prompt = null

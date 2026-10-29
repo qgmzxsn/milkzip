@@ -13,7 +13,7 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
-internal class NativeWorkerException(message: String) : IOException(message)
+internal class NativeWorkerException(message: String, val diagnostic: File? = null) : IOException(message)
 
 /** Blocking worker-side client; all ServiceConnection callbacks remain on the main looper. */
 internal object NativeWorker {
@@ -70,11 +70,8 @@ internal object NativeWorker {
                 }
             }
             failure.get()?.let { message ->
-                val reason = if (Build.VERSION.SDK_INT >= 30 && pid > 0) runCatching {
-                    val exit = context.getSystemService(ActivityManager::class.java).getHistoricalProcessExitReasons(context.packageName, pid, 1).firstOrNull()
-                    exit?.let { "\n系统退出原因：${it.reason}，${it.description.orEmpty()}" }.orEmpty()
-                }.getOrDefault("") else ""
-                throw NativeWorkerException(message + reason + "\n已完成的文件保留。请保留此报告以便定位问题。")
+                val report = CrashDiagnostics.capture(context, pid)
+                throw NativeWorkerException(message + report.summary + "\n已完成的文件保留。请保留此报告以便定位问题。", report.file)
             }
             return response.readText()
         } catch (error: RemoteException) { throw NativeWorkerException("解压引擎连接中断，已完成的文件保留。") }
