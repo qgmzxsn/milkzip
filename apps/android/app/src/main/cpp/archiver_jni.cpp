@@ -152,9 +152,9 @@ struct AndroidCallbacks {
   JavaVM *vm = nullptr;
   std::recursive_mutex mutex;
   jthrowable error = nullptr;
-  struct Environment {
+  struct ThreadAttachment {
     JavaVM *vm; JNIEnv *env = nullptr; bool attached = false;
-    explicit Environment(JavaVM *v) : vm(v) {
+    explicit ThreadAttachment(JavaVM *v) : vm(v) {
       if (!vm) return;
       if (vm->GetEnv(reinterpret_cast<void **>(&env), JNI_VERSION_1_6) == JNI_EDETACHED) {
 #if defined(__ANDROID__)
@@ -164,7 +164,15 @@ struct AndroidCallbacks {
 #endif
       }
     }
-    ~Environment() { if (attached) vm->DetachCurrentThread(); }
+    ~ThreadAttachment() { if (attached) vm->DetachCurrentThread(); }
+  };
+  struct Environment {
+    JNIEnv *env;
+    explicit Environment(JavaVM *vm) {
+      // One VM per app; attach native codec threads once and detach when they exit.
+      static thread_local ThreadAttachment attachment(vm);
+      env = attachment.env;
+    }
   };
   bool capture(JNIEnv *env) {
     if (env && env->ExceptionCheck()) {

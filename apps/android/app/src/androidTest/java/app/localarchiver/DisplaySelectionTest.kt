@@ -7,6 +7,7 @@ import androidx.test.espresso.Espresso.onData
 import androidx.test.espresso.action.ViewActions.*
 import androidx.test.espresso.matcher.ViewMatchers.*
 import androidx.test.espresso.matcher.RootMatchers.isDialog
+import androidx.test.espresso.matcher.RootMatchers.isPlatformPopup
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.hamcrest.Matchers.equalTo
@@ -42,19 +43,24 @@ class DisplaySelectionTest {
                 onView(withText(root.name)).perform(click()); waitFor { hasText("普通文件.txt") }
                 onView(withText("视图")).perform(click())
                 onView(withContentDescription("文件展示方式")).inRoot(isDialog()).perform(click())
-                onData(equalTo("图标网格")).perform(click())
+                waitFor { hasText("图标网格") }; onData(equalTo("图标网格")).inRoot(isPlatformPopup()).perform(click())
                 onView(withContentDescription("界面配色")).inRoot(isDialog()).perform(click())
-                onData(equalTo("海洋蓝")).perform(click())
+                waitFor { hasText("海洋蓝") }; onData(equalTo("海洋蓝")).inRoot(isPlatformPopup()).perform(click())
+                var previous: MainActivity? = null; scenario.onActivity { previous = it }
                 onView(withText("应用")).inRoot(isDialog()).perform(click())
+                waitFor { var changed = false; runCatching { scenario.onActivity { changed = it !== previous && it.window.decorView.hasWindowFocus() } }; changed }
                 waitFor { prefs.getString("view-mode", "") == "grid" && hasText("普通文件.txt") }
                 screenshot("06-grid-blue")
                 scenario.recreate(); waitFor { hasText("普通文件.txt") }; assertEquals("grid", prefs.getString("view-mode", ""))
                 onView(withText("视图")).perform(click())
                 onView(withContentDescription("文件展示方式")).inRoot(isDialog()).perform(click())
-                onData(equalTo("原位展开文件夹")).perform(click())
+                waitFor { hasText("原位展开文件夹") }; onData(equalTo("原位展开文件夹")).inRoot(isPlatformPopup()).perform(click())
                 onView(withContentDescription("界面配色")).inRoot(isDialog()).perform(click())
-                onData(equalTo("简约黑白")).perform(click())
-                onView(withText("应用")).inRoot(isDialog()).perform(click()); waitFor { hasText("▸ 子目录") }
+                waitFor { hasText("简约黑白") }; onData(equalTo("简约黑白")).inRoot(isPlatformPopup()).perform(click())
+                scenario.onActivity { previous = it }
+                onView(withText("应用")).inRoot(isDialog()).perform(click())
+                waitFor { var changed = false; runCatching { scenario.onActivity { changed = it !== previous && it.window.decorView.hasWindowFocus() } }; changed }
+                waitFor { hasText("▸ 子目录") }
                 onView(withText("▸ 子目录")).perform(click()); waitFor { hasText("展开后的文件.txt") }
                 screenshot("07-expanded-mono")
                 scenario.recreate(); waitFor { hasText("展开后的文件.txt") }
