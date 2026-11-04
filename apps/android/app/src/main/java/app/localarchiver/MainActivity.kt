@@ -707,7 +707,7 @@ class MainActivity : Activity() {
         runCatching { PasswordBook(this).read() }.fold({ passwordDraft = it.toMutableList(); passwordOriginal = it; passwordDirty = false; render() }, {
             passwordDraft.clear(); render(); AlertDialog.Builder(this).setTitle("密码本无法读取").setMessage("${it.message}\n现有加密文件没有被覆盖。若密钥已经失效，可重置密码本后重新添加。")
                 .setPositiveButton("关闭", null).setNegativeButton("重置密码本") { _, _ -> AlertDialog.Builder(this).setTitle("删除原密码本并重置？").setMessage("此操作会清空本机已保存的密码。")
-                    .setPositiveButton("重置") { _, _ -> runCatching { PasswordBook(this).write(emptyList()) }.onSuccess { loadPasswords() }.onFailure(::failure) }.setNegativeButton("取消", null).show() }.show()
+                    .setPositiveButton("重置") { _, _ -> runCatching { PasswordBook(this@MainActivity).reset() }.onSuccess { loadPasswords() }.onFailure(::failure) }.setNegativeButton("取消", null).show() }.show()
         })
     }
     private fun renderPasswords() {
