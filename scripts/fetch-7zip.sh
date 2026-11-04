@@ -15,6 +15,10 @@ fi
 if [ ! -f "$tarball" ]; then
   curl -fsSL -o "$tarball" "$url"
 fi
-echo "$sum  $tarball" | sha256sum -c -
+if command -v sha256sum >/dev/null 2>&1; then
+  echo "$sum  $tarball" | sha256sum -c -
+else
+  echo "$sum  $tarball" | shasum -a 256 -c -
+fi
 mkdir -p "$src"
 tar -xJf "$tarball" -C "$src"

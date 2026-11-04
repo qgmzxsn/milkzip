@@ -20,3 +20,11 @@ apps/android/**/build/
 __pycache__/
 
 build-ui/
+apps/android/.local/
+apps/android/.kotlin/
+apps/android/.idea/
+*.jks
+*.keystore
+
+work/
+build-android-host/

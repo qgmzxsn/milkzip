@@ -80,6 +80,14 @@ class FormatTests(unittest.TestCase):
         self.assertTrue(any(p.is_file() and p.read_bytes() == payload for p in dest.rglob('*')),
                         [str(p.relative_to(dest)) for p in dest.rglob('*')])
 
+    def test_nsis_executable_and_nested_renamed_container(self):
+        data = (FIXTURES / 'nsis.exe').read_bytes()
+        for name, payload in [('setup.exe', data), ('renamed.txt', data),
+                              ('outer.zip', zipped({'setup.exe': data}))]:
+            code, message, out = self.extract(name, payload)
+            self.assertEqual(code, 0, message)
+            self.assert_payload(out, b'MilkZip NSIS fixture')
+
     def test_zip_unknown_and_incorrect_suffixes(self):
         for name in ['archive.txt', 'archive.bin', 'archive', 'archive.7z', 'archive.lz4']:
             with self.subTest(name=name):
