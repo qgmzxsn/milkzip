@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.Espresso.onData
+import androidx.test.espresso.assertion.ViewAssertions.matches
 import androidx.test.espresso.action.ViewActions.*
 import androidx.test.espresso.matcher.ViewMatchers.*
 import androidx.test.espresso.matcher.RootMatchers.isDialog
@@ -27,6 +28,9 @@ class DisplaySelectionTest {
         error("UI timed out")
     }
     private fun hasText(value: String) = inst.uiAutomation.rootInActiveWindow?.findAccessibilityNodeInfosByText(value)?.isNotEmpty() == true
+    private fun hasTextExact(value: String) =
+        inst.uiAutomation.rootInActiveWindow?.findAccessibilityNodeInfosByText(value)
+            ?.any { it.text?.toString() == value } == true
     private fun screenshot(name: String) {
         fun shell(command: String) = inst.uiAutomation.executeShellCommand(command).use { android.os.ParcelFileDescriptor.AutoCloseInputStream(it).readBytes() }
         shell("mkdir -p /sdcard/Download/MilkZipScreenshots")
@@ -41,7 +45,8 @@ class DisplaySelectionTest {
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 onView(withText("结果")).perform(click()); waitFor { hasText(root.name) }
                 onView(withText(root.name)).perform(click()); waitFor { hasText("普通文件.txt") }
-                onView(withText("视图")).perform(click())
+                onView(withContentDescription("目录操作")).perform(click())
+                onView(withText("视图")).inRoot(isPlatformPopup()).perform(click())
                 onView(withContentDescription("文件展示方式")).inRoot(isDialog()).perform(click())
                 waitFor { hasText("图标网格") }; onData(equalTo("图标网格")).inRoot(isPlatformPopup()).perform(click())
                 onView(withContentDescription("界面配色")).inRoot(isDialog()).perform(click())
@@ -52,7 +57,8 @@ class DisplaySelectionTest {
                 waitFor { prefs.getString("view-mode", "") == "grid" && hasText("普通文件.txt") }
                 screenshot("06-grid-blue")
                 scenario.recreate(); waitFor { hasText("普通文件.txt") }; assertEquals("grid", prefs.getString("view-mode", ""))
-                onView(withText("视图")).perform(click())
+                onView(withContentDescription("目录操作")).perform(click())
+                onView(withText("视图")).inRoot(isPlatformPopup()).perform(click())
                 onView(withContentDescription("文件展示方式")).inRoot(isDialog()).perform(click())
                 waitFor { hasText("原位展开文件夹") }; onData(equalTo("原位展开文件夹")).inRoot(isPlatformPopup()).perform(click())
                 onView(withContentDescription("界面配色")).inRoot(isDialog()).perform(click())
@@ -73,18 +79,33 @@ class DisplaySelectionTest {
     }
     @Test fun visibleSelectAllAndBatchButtonLaunchOneOperation() {
         val storage = Storage(context); val root = File(storage.results, "0000-批量入口").apply { mkdirs() }
-        for (name in listOf("a.zip", "b.zip")) inst.context.assets.open("fixtures/inner.zip").use { input -> File(root, name).outputStream().use { input.copyTo(it) } }
+        for ((file, asset) in listOf("a.7删z" to "bcj2.7z", "b.zip" to "inner.zip")) {
+            inst.context.assets.open("fixtures/$asset").use { input -> File(root, file).outputStream().use { input.copyTo(it) } }
+        }
         prefs.edit().putString("view-mode", "list").commit()
         try {
             ActivityScenario.launch(MainActivity::class.java).use {
-                onView(withText("结果")).perform(click()); waitFor { hasText(root.name) }; onView(withText(root.name)).perform(click()); waitFor { hasText("a.zip") }
+                onView(withText("结果")).perform(click()); waitFor { hasText(root.name) }; onView(withText(root.name)).perform(click()); waitFor { hasText("a.7删z") }
                 onView(withText("多选")).perform(click()); onView(withText("全选")).perform(click()); onView(withText("批量解压")).perform(click())
                 waitFor { hasText("批量解压 2 组") }
                 onView(withText("开始批量解压")).inRoot(isDialog()).perform(click())
                 waitFor { Tasks.state == null && Tasks.records.firstOrNull()?.title == "批量解压 2 组" }
                 assertEquals(Tasks.records.first().detail, 0, Tasks.records.first().code)
                 assertEquals(2, Tasks.records.first().outputs.size)
-                assertTrue(File(root, "a.zip").exists()); assertTrue(File(root, "b.zip").exists())
+                waitFor { hasText("a.7删z_解压") && hasText("b.zip_解压") }
+                onView(withText("查看结果")).check(matches(isDisplayed()))
+                assertTrue(File(root, "a.7删z").exists())
+                assertTrue(File(root, "b.zip").exists())
+
+                // Delete from the same directory without returning from the Tasks page.
+                onView(withText("a.7删z")).perform(longClick())
+                onView(withText("删除")).perform(click())
+                onView(withId(android.R.id.button1)).inRoot(isDialog()).perform(click())
+                waitFor { Tasks.state == null && !File(root, "a.7删z").exists() &&
+                    !hasTextExact("a.7删z") && hasTextExact("b.zip") }
+                assertEquals(0, Tasks.records.first().code)
+                onView(withText("b.zip")).check(matches(isDisplayed()))
+                screenshot("09-after-delete")
             }
         } finally { if (Tasks.state != null) { Tasks.cancel(); waitFor { Tasks.state == null } }; root.deleteRecursively() }
     }

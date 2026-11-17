@@ -44,6 +44,7 @@
 #include <algorithm>
 #include <memory>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -2080,6 +2081,24 @@ std::string leading_volume(const std::string &path) {
   return path;
 }
 
+// Older TARs have no ustar marker. Check the first header checksum before
+// sending the file to the TAR handler for validation.
+bool has_tar_header(const unsigned char *header, size_t size) {
+  if (size < 512 || header[0] == 0) return false;
+  unsigned stored = 0;
+  size_t i = 148;
+  while (i < 156 && header[i] == ' ') ++i;
+  const size_t first = i;
+  for (; i < 156 && header[i] >= '0' && header[i] <= '7'; ++i)
+    stored = stored * 8 + (header[i] - '0');
+  if (i == first || i == 156) return false;
+  for (; i < 156; ++i)
+    if (header[i] != 0 && header[i] != ' ') return false;
+  unsigned sum = 0;
+  for (i = 0; i < 512; ++i) sum += i >= 148 && i < 156 ? ' ' : header[i];
+  return stored == sum;
+}
+
 // Extension-independent, bounded reads. Weak formats such as LZMA still have
 // to pass the actual handler; signatures are only candidates.
 Kind content_kind(const std::string &path) {
@@ -2121,7 +2140,7 @@ Kind content_kind(const std::string &path) {
   if (n >= 7 && h[2] == '-' && h[3] == 'l' && (h[4] == 'h' || h[4] == 'z') && h[6] == '-') return Kind::Lzh;
   if ((n >= 6 && !memcmp(h, "07070", 5)) || (n >= 2 &&
       ((h[0] == 0xC7 && h[1] == 0x71) || (h[0] == 0x71 && h[1] == 0xC7)))) return Kind::Cpio;
-  if (n >= 262 && !memcmp(h + 257, "ustar", 5)) return Kind::Tar;
+  if (has_tar_header(h, n) || (n >= 262 && !memcmp(h + 257, "ustar", 5))) return Kind::Tar;
   if (n >= 13 && h[0] < 225) {
     const uint32_t dictionary = read_u32(h + 1);
     const bool valid_dictionary = dictionary >= 4096 && dictionary <= (1u << 30) &&
@@ -2148,23 +2167,27 @@ bool carrier_header(const std::string &path) {
       (n >= 4 && (!memcmp(h, "RIFF", 4) || !memcmp(h, "GIF8", 4) || read_u32(h) == 0xA3DF451Au));
 }
 
-ArchiverResult open_archive_impl(const char *input_path, const char *engine_path,
-                                 const char *password, ArchiverArchive **out,
-                                 uint64_t scan_window) {
-  if (!out) return ARCHIVER_ERR_ARGUMENT;
-  *out = nullptr;
-  if (!input_path || !input_path[0]) return ARCHIVER_ERR_ARGUMENT;
-  const std::string normalized = leading_volume(input_path);
-  const char *archive_path = normalized.c_str();
-  if (normalized != input_path && !regular_file_exists(normalized)) {
-    auto *failed = new ArchiverArchive();
-    failed->message = "missing volume: " + base_name_of(normalized);
-    *out = failed;
-    return ARCHIVER_ERR_MISSING_VOLUME;
+bool try_standalone_before_volumes(const std::string &path, const std::string &first, Kind detected) {
+  if (first == path || detected == Kind::Unsupported) return false;
+  if (!numeric_volume_name(path)) {
+    // RAR volumes can each have a RAR header. Keep the first-volume lookup
+    // for matching RAR/ZIP volume names.
+    return split_kind(basename_lower(path)) != detected;
   }
+  if (detected == Kind::Zip) {
+    // The ZIP handler can list local headers even when the central directory
+    // is in another volume. Only prefer this file if its directory is present.
+    uint64_t size = 0, offset = 0;
+    return file_size_of(path, &size) && zip_start_from_eocd(path, size, &offset);
+  }
+  return true;
+}
 
+ArchiverResult open_archive_file(const std::string &path, Kind detected, const char *engine_path,
+                                const char *password, ArchiverArchive **out, uint64_t scan_window,
+                                bool join_numbered) {
+  const char *archive_path = path.c_str();
   const Kind hint = classify(archive_path);
-  Kind detected = content_kind(archive_path);
   Kind kind = detected == Kind::Unsupported ? hint : detected;
   // Preserve the existing transparent tar wrappers when the suffix agrees.
   if ((hint == Kind::TarGz && detected == Kind::Gzip) ||
@@ -2248,7 +2271,7 @@ ArchiverResult open_archive_impl(const char *input_path, const char *engine_path
         }
       }
     }
-  } else if (numeric_volume_name(archive_path)) {
+  } else if (join_numbered && numeric_volume_name(archive_path)) {
     result = open_numeric_volume(archive.get(), kind, archive_path, pw);
   } else {
     result = open_kind(archive.get(), kind, archive_path, pw, &archive->volumes);
@@ -2272,6 +2295,36 @@ ArchiverResult open_archive_impl(const char *input_path, const char *engine_path
   }
   *out = archive.release();
   return result;
+}
+
+ArchiverResult open_archive_impl(const char *input_path, const char *engine_path,
+                                 const char *password, ArchiverArchive **out,
+                                 uint64_t scan_window) {
+  if (!out) return ARCHIVER_ERR_ARGUMENT;
+  *out = nullptr;
+  if (!input_path || !input_path[0]) return ARCHIVER_ERR_ARGUMENT;
+  const std::string path(input_path);
+  const std::string first = leading_volume(path);
+  const Kind detected = content_kind(path);
+  if (try_standalone_before_volumes(path, first, detected)) {
+    // A complete archive can have any suffix, including ".002". Let the
+    // detected handler try it before substituting or joining other files.
+    const ArchiverResult standalone = open_archive_file(path, detected, engine_path, password,
+                                                        out, scan_window, false);
+    if (standalone != ARCHIVER_ERR_FORMAT && standalone != ARCHIVER_ERR_UNSUPPORTED)
+      return standalone;
+    if (first != path && !regular_file_exists(first)) return standalone;
+    archiver_close(*out);
+    *out = nullptr;
+  }
+  if (first != path && !regular_file_exists(first)) {
+    auto *failed = new ArchiverArchive();
+    failed->message = "missing volume: " + base_name_of(first);
+    *out = failed;
+    return ARCHIVER_ERR_MISSING_VOLUME;
+  }
+  return open_archive_file(first, first == path ? detected : content_kind(first),
+                           engine_path, password, out, scan_window, true);
 }
 
 ArchiverResult archiver_open(const char *input_path, const char *engine_path, const char *password,
@@ -2773,23 +2826,6 @@ bool delete_file_at(const std::string &path) {
 #endif
 }
 
-// Non-leading volumes are supplied to the handler by the first volume.
-bool continuation_volume(const std::string &path) {
-  std::string base = basename_lower(path);
-  size_t dot = base.rfind('.');
-  std::string ext = dot == std::string::npos ? "" : base.substr(dot + 1);
-  if (all_digits(ext) && ext.size() >= 2 && ext.size() <= 4)
-    return strtoul(ext.c_str(), nullptr, 10) != 1;
-  if (ext.size() == 3 && (ext[0] == 'r' || ext[0] == 'z') && all_digits(ext.substr(1)))
-    return true;
-  size_t part = base.rfind(".part");
-  if (part != std::string::npos && ends_with(base, ".rar")) {
-    std::string number = base.substr(part + 5, base.size() - part - 9);
-    if (all_digits(number)) return strtoul(number.c_str(), nullptr, 10) != 1;
-  }
-  return false;
-}
-
 struct NestedProgress {
   ArchiverProgressCallback callback;
   void *user;
@@ -2898,27 +2934,32 @@ ArchiverResult nested_extract(const std::string &path, const char *engine, const
   if (options && static_cast<uint32_t>(budget.depth) >= depth_limit) return ARCHIVER_OK;
 
   std::vector<std::string> archives;
+  std::unordered_set<std::string> extracted_files;
+  for (const auto &entry : entries)
+    if (!entry.is_dir && !entry.is_symlink) extracted_files.insert(entry.path);
   // Inspect only this layer's extracted entries. Never unpack unrelated files
   // already present in the destination or traverse extracted symbolic links.
   for (const auto &entry : entries) {
     const std::string &rel = entry.path;
     if (entry.is_dir || entry.is_symlink) continue;
-    if (continuation_volume(rel)) {
-      const std::string first = leading_volume(rel);
-      const bool present = std::any_of(entries.begin(), entries.end(), [&](const ListedEntry &item) {
-        return !item.is_dir && !item.is_symlink && item.path == first;
-      });
-      if (present) continue;
-      archives.push_back(rel);
-      continue;
-    }
     const std::string full = join_dir(dest, rel);
     const Kind hint = classify(rel), detected = content_kind(full);
+    const std::string first_rel = leading_volume(rel);
+    const std::string first = join_dir(dest, first_rel);
+    const bool first_in_layer = first_rel != rel && extracted_files.count(first_rel) != 0;
+    if (first_rel != rel && !try_standalone_before_volumes(full, first, detected)) {
+      if (!first_in_layer) archives.push_back(rel);
+      continue;
+    }
     if (hint == Kind::Unsupported && detected == Kind::Unsupported &&
         !is_disguise_carrier(rel) && !carrier_header(full)) continue;
     if (progress && progress(0, 0, progress_user)) return ARCHIVER_ERR_CANCELLED;
     ArchiverArchive *inner = nullptr;
     ArchiverResult trial = open_archive_impl(full.c_str(), engine, nullptr, &inner, kDisguiseScanWindow);
+    if (first_in_layer && inner && inner->source_path == first) {
+      archiver_close(inner);
+      continue;
+    }
     bool is_archive = trial == ARCHIVER_OK || trial == ARCHIVER_ERR_PASSWORD_REQUIRED ||
                       trial == ARCHIVER_ERR_PASSWORD || trial == ARCHIVER_ERR_MISSING_VOLUME;
     if (trial == ARCHIVER_ERR_PATH || trial == ARCHIVER_ERR_ENGINE) {

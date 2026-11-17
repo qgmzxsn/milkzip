@@ -94,6 +94,38 @@ class FormatTests(unittest.TestCase):
                 code, message, out = self.extract(name, zipped({'hello.txt': PAYLOAD}))
                 self.assertEqual(code, 0, message); self.assert_payload(out)
 
+    @unittest.skipUnless(SEVEN, '7-Zip fixture encoder unavailable')
+    def test_sevenzip_suffix_does_not_determine_open_or_recursion(self):
+        source = self.root / 'hello.txt'
+        source.write_bytes(PAYLOAD)
+        archive = self.root / 'sample.7z'
+        subprocess.run([SEVEN, 'a', '-t7z', str(archive), str(source)],
+                       check=True, capture_output=True)
+        data = archive.read_bytes()
+        for name in ['样本.7删z', 'sample', 'sample.jpg', 'sample.002', 'sample.r01', 'sample.z01']:
+            with self.subTest(name=name):
+                code, message, out = self.extract(name, data)
+                self.assertEqual(code, 0, message)
+                self.assert_payload(out)
+        other = zipped({'other.txt': b'independent ZIP'})
+        code, message, out = self.extract('outer.zip', zipped({
+            'same.001': other, 'same.002': data, 'sample.7删z': data,
+        }))
+        self.assertEqual(code, 0, message)
+        self.assertEqual((out / 'same.001.unpacked' / 'other.txt').read_bytes(), b'independent ZIP')
+        self.assertEqual((out / 'same.002.unpacked' / 'hello.txt').read_bytes(), PAYLOAD)
+        self.assertEqual((out / 'sample.7删z.unpacked' / 'hello.txt').read_bytes(), PAYLOAD)
+
+    def test_legacy_tar_checksum_without_ustar(self):
+        data = bytearray(tarred({'hello.txt': PAYLOAD}))
+        data[257:512] = bytes(255)
+        data[148:156] = b' ' * 8
+        data[148:156] = ('%06o' % sum(data[:512])).encode('ascii') + b'\0 '
+        for name, contents in [('old.任意', bytes(data)), ('outer.zip', zipped({'old': data}))]:
+            code, message, out = self.extract(name, contents)
+            self.assertEqual(code, 0, message)
+            self.assert_payload(out)
+
     def test_streams_and_tar_by_content(self):
         frame = bytes.fromhex('28b52ffd0000') + ((len(PAYLOAD) << 3) | 1).to_bytes(3, 'little') + PAYLOAD
         cases = [gzip.compress(PAYLOAD), bz2.compress(PAYLOAD), lzma.compress(PAYLOAD),

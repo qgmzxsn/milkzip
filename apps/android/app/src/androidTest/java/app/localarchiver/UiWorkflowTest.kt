@@ -6,6 +6,7 @@ import android.app.UiModeManager
 import android.content.Context
 import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso.onView
+import androidx.test.espresso.assertion.ViewAssertions.matches
 import androidx.test.espresso.action.ViewActions.*
 import androidx.test.espresso.matcher.ViewMatchers.*
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -102,6 +103,8 @@ class UiWorkflowTest {
             waitFor { Tasks.state == null && Tasks.records.firstOrNull()?.id != beforeQuick }
             assertEquals(Tasks.records.first().detail, 0, Tasks.records.first().code)
             assertTrue(File(Tasks.records.first().output!!).walkTopDown().any { it.name == "你好.txt" })
+            onView(withText("一键解压")).check(matches(isDisplayed()))
+            onView(withText("查看结果")).check(matches(isDisplayed()))
             val encrypted = File(storage.results, "加密测试.7z")
             inst.context.assets.open("fixtures/secret.7z").use { input -> encrypted.outputStream().use { input.copyTo(it) } }
             scenario.onActivity { assertTrue(Tasks.submit(Job("extract", listOf(storage.fromFile(encrypted))))) }

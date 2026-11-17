@@ -23,7 +23,7 @@ internal data class Job(
     val parent: File? = null, val name: String = "", val exportTree: String? = null,
     val sameDirectory: Boolean = false, val initialPassword: CharArray? = null
 )
-data class TaskRecord(val id: String, val title: String, val time: Long, val code: Int, val detail: String, val output: String?, val outputs: List<String> = emptyList(), val diagnostic: String? = null)
+data class TaskRecord(val id: String, val title: String, val time: Long, val code: Int, val detail: String, val output: String?, val outputs: List<String> = emptyList(), val diagnostic: String? = null, val kind: String = "")
 data class OpenFailure(val recordId: String, val source: Node)
 data class TaskState(val title: String, val phase: String, val done: Long = 0, val total: Long = 0, val waiting: Boolean = false)
 data class Prompt(val id: String = UUID.randomUUID().toString(), val path: String = "", val rejected: Boolean = false, val branches: List<String>? = null)
@@ -58,7 +58,7 @@ object Tasks {
         records = runCatching {
             val file = File(context.filesDir, "task-history.json")
             if (!file.exists()) emptyList() else JSONArray(file.readText()).let { a -> (0 until a.length()).map {
-                a.getJSONObject(it).let { o -> TaskRecord(o.getString("id"), o.getString("title"), o.getLong("time"), o.getInt("code"), o.optString("detail"), o.optString("output").ifEmpty { null }, o.optJSONArray("outputs")?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList(), o.optString("diagnostic").ifEmpty { null }) }
+                a.getJSONObject(it).let { o -> TaskRecord(o.getString("id"), o.getString("title"), o.getLong("time"), o.getInt("code"), o.optString("detail"), o.optString("output").ifEmpty { null }, o.optJSONArray("outputs")?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList(), o.optString("diagnostic").ifEmpty { null }, o.optString("kind")) }
             } }
         }.getOrDefault(emptyList())
         // Cached inputs have no live owner after a process restart; results are outside cache.
@@ -94,7 +94,7 @@ object Tasks {
     fun clearHistory() { records = emptyList(); saveRecords(); publish() }
     @Synchronized private fun saveRecords() = runCatching {
         val a = JSONArray()
-        records.forEach { a.put(JSONObject().put("id", it.id).put("title", it.title).put("time", it.time).put("code", it.code).put("detail", it.detail).put("output", it.output ?: "").put("outputs", JSONArray(it.outputs)).put("diagnostic", it.diagnostic ?: "")) }
+        records.forEach { a.put(JSONObject().put("id", it.id).put("title", it.title).put("time", it.time).put("code", it.code).put("detail", it.detail).put("output", it.output ?: "").put("outputs", JSONArray(it.outputs)).put("diagnostic", it.diagnostic ?: "").put("kind", it.kind)) }
         val file = android.util.AtomicFile(File(context.filesDir, "task-history.json"))
         val stream = file.startWrite()
         try { stream.write(a.toString().toByteArray()); file.finishWrite(stream) } catch (error: Exception) { file.failWrite(stream) }
@@ -254,7 +254,11 @@ object Tasks {
                             code = if (failures.isEmpty()) 0 else if (done > 0) 13 else 2
                         } finally {
                             // Retire the cached browser view even if a directory was only partly deleted.
-                            retirePage()
+                            val source = page?.source
+                            if (source != null && job.sources.any { it.location == source.location ||
+                                (it.directory && ArchivePlan.deletionRoots(listOf(it, source)).size == 1) }) {
+                                retirePage()
+                            }
                         }
                     }
                     "list", "test" -> {
@@ -306,7 +310,7 @@ object Tasks {
                 if (!keepScratch) scratch.deleteRecursively()
                 if (output != null && job.kind !in listOf("extract", "extractBatch")) detail += "\n结果目录：${output!!.absolutePath}"
                 if (warnings.isNotEmpty()) detail += "\n" + warnings.distinct().joinToString("\n")
-                val record = TaskRecord(UUID.randomUUID().toString(), title(job), System.currentTimeMillis(), code, detail.trim().take(65000), output?.absolutePath, outputs, diagnostic)
+                val record = TaskRecord(UUID.randomUUID().toString(), title(job), System.currentTimeMillis(), code, detail.trim().take(65000), output?.absolutePath, outputs, diagnostic, job.kind)
                 if (job.kind == "list" && code in listOf(3, 8)) openFailure = OpenFailure(record.id, job.sources.first())
                 records = (listOf(record) + records).take(50); saveRecords()
                 prompt = null

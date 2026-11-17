@@ -4,16 +4,19 @@ import android.Manifest
 import android.app.*
 import android.content.*
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.net.Uri
 import android.os.*
 import android.provider.Settings
 import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
+import android.text.TextUtils
 import android.text.method.PasswordTransformationMethod
 import android.view.*
 import android.widget.*
@@ -34,7 +37,12 @@ class MainActivity : Activity() {
     private lateinit var body: FrameLayout
     private lateinit var title: TextView
     private lateinit var subtitle: TextView
+    private lateinit var header: LinearLayout
+    private lateinit var miniBar: LinearLayout
     private lateinit var mini: TextView
+    private lateinit var miniAction: TextView
+    private lateinit var miniClose: TextView
+    private var inlineResult: TaskRecord? = null
     private lateinit var nav: LinearLayout
     private var tab = 0
     private var folder: Node? = null
@@ -49,8 +57,18 @@ class MainActivity : Activity() {
     private val treeChildren = mutableMapOf<String, List<Node>>()
     private val fileDepths = mutableMapOf<String, Int>()
     private var refreshCurrentListing: () -> Unit = {}
+    private var reloadFolder: () -> Unit = {}
+    private var listing: AbsListView? = null
+    private var folderScroll: ScrollAnchor? = null
     private val viewMode get() = prefs.getString("view-mode", "list") ?: "list"
-    private var query = ""
+    private var folderQuery = ""
+    private var archiveQuery = ""
+    private var query: String
+        get() = if (archive == null) folderQuery else archiveQuery
+        set(value) {
+            if (archive == null) folderQuery = value else archiveQuery = value
+        }
+    private var searchOpen = false
     private var sort = "name"
     private var epoch = 0
     private var resumed = false
@@ -69,13 +87,24 @@ class MainActivity : Activity() {
     private var pendingName = ""
     private var externalSources = emptyList<Node>()
     private var loading = false
-    private data class Retained(val parents: List<Node>, val archive: ArchivePage?, val draft: List<String>, val original: List<String>, val dirty: Boolean, val query: String, val selected: Set<String>, val selecting: Boolean, val expanded: Set<String>, val children: Map<String, List<Node>>)
-    override fun onRetainNonConfigurationInstance(): Any = Retained(parents.toList(), archive, passwordDraft.toList(), passwordOriginal, passwordDirty, query, selected.toSet(), selectionMode, expanded.toSet(), treeChildren.toMap())
+    private data class ScrollAnchor(val location: String?, val position: Int, val top: Int)
+    private data class Retained(
+        val parents: List<Node>, val archive: ArchivePage?, val draft: List<String>,
+        val original: List<String>, val dirty: Boolean, val folderQuery: String,
+        val archiveQuery: String, val searchOpen: Boolean, val scroll: ScrollAnchor?,
+        val selected: Set<String>, val selecting: Boolean, val expanded: Set<String>,
+        val children: Map<String, List<Node>>, val result: TaskRecord?, val latestRecord: String?
+    )
+    override fun onRetainNonConfigurationInstance(): Any = Retained(
+        parents.toList(), archive, passwordDraft.toList(), passwordOriginal, passwordDirty,
+        folderQuery, archiveQuery, searchOpen, if (archive == null) captureScroll() ?: folderScroll else folderScroll,
+        selected.toSet(), selectionMode, expanded.toSet(), treeChildren.toMap(), inlineResult, latestRecord
+    )
     private val dark get() = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
-    private val bg get() = Color.parseColor(if (dark) "#141B18" else "#F7F9F6")
-    private val surface get() = Color.parseColor(if (dark) "#202A24" else "#FFFFFF")
-    private val ink get() = Color.parseColor(if (dark) "#E2EBE3" else "#202D25")
-    private val muted get() = Color.parseColor(if (dark) "#A0B0A5" else "#68776C")
+    private val bg get() = Color.parseColor(if (dark) "#15191E" else "#F6F7F9")
+    private val surface get() = Color.parseColor(if (dark) "#1E232A" else "#FFFFFF")
+    private val ink get() = Color.parseColor(if (dark) "#EFF1F4" else "#20242A")
+    private val muted get() = Color.parseColor(if (dark) "#A9B3BE" else "#626D7D")
     private val green get() = Color.parseColor(when (prefs.getString("palette", "green")) {
         "blue" -> if (dark) "#A5CAFF" else "#235B95"
         "mono" -> if (dark) "#E0E0E0" else "#3D454B"
@@ -98,6 +127,28 @@ class MainActivity : Activity() {
         background = rounded(if (primary) green else tint, 14)
         setPadding(dp(12), dp(6), dp(12), dp(6)); setOnClickListener { click() }
     }
+    private fun flatAction(label: String, click: () -> Unit) = text(label, 13f, green).apply {
+        gravity = Gravity.CENTER
+        minimumHeight = dp(48)
+        setPadding(dp(8), 0, dp(8), 0)
+        background = actionRipple()
+        setOnClickListener { click() }
+    }
+    private fun iconAction(icon: Int, label: String, click: (View) -> Unit) = ImageButton(this).apply {
+        contentDescription = label
+        setImageResource(icon)
+        imageTintList = ColorStateList.valueOf(ink)
+        scaleType = ImageView.ScaleType.CENTER
+        background = actionRipple()
+        setOnClickListener(click)
+    }
+    private fun actionRipple() = RippleDrawable(ColorStateList.valueOf(tint), null, rounded(Color.WHITE, 12))
+    private fun captureScroll(): ScrollAnchor? {
+        val list = listing ?: return null
+        val first = list.firstVisiblePosition
+        val child = list.getChildAt(0) ?: return null
+        return ScrollAnchor(visible.getOrNull(first)?.location, first, child.top - list.paddingTop)
+    }
     private fun LinearLayout.add(view: View, weight: Float = 0f) { addView(view, LinearLayout.LayoutParams(if (weight > 0) 0 else -1, -2, weight).apply { if (orientation == LinearLayout.HORIZONTAL) { marginEnd = dp(6); width = if (weight > 0) 0 else -2 } else bottomMargin = dp(8) }) }
     private fun padded(view: LinearLayout, amount: Int = 16) = view.apply { setPadding(dp(amount), dp(amount), dp(amount), dp(amount)) }
     private fun notify(value: String) { Toast.makeText(this, value, Toast.LENGTH_LONG).show() }
@@ -114,9 +165,25 @@ class MainActivity : Activity() {
         if (folder == null) folder = storage.fromFile(if (storage.allFiles) File(storage.shared, "Download").takeIf { it.isDirectory } ?: storage.shared else storage.results)
         archive = Tasks.page
         val retained = lastNonConfigurationInstance as? Retained
-        retained?.let { parents.addAll(it.parents); archive = it.archive; passwordDraft = it.draft.toMutableList(); passwordOriginal = it.original; passwordDirty = it.dirty; query = it.query; selected.addAll(it.selected); selectionMode = it.selecting; expanded.addAll(it.expanded); treeChildren.putAll(it.children) }
+        retained?.let {
+            parents.addAll(it.parents)
+            archive = it.archive
+            passwordDraft = it.draft.toMutableList()
+            passwordOriginal = it.original
+            passwordDirty = it.dirty
+            folderQuery = it.folderQuery
+            archiveQuery = it.archiveQuery
+            searchOpen = it.searchOpen
+            folderScroll = it.scroll
+            selected.addAll(it.selected)
+            selectionMode = it.selecting
+            expanded.addAll(it.expanded)
+            treeChildren.putAll(it.children)
+            inlineResult = it.result
+        }
         pageVersion = Tasks.pageVersion
-        latestRecord = Tasks.records.firstOrNull()?.id
+        latestRecord = if (retained == null) Tasks.records.firstOrNull()?.id else retained.latestRecord
+        if (archive != null && Tasks.page == null && Tasks.state == null && retained != null) archive = null
         buildShell()
         if (tab == 2 && retained == null) loadPasswords() else render()
         if (savedInstanceState == null) handleIntent(intent)
@@ -135,7 +202,7 @@ class MainActivity : Activity() {
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
             view.setPadding(bars.left, bars.top, bars.right, bars.bottom); insets
         }
-        val header = row().apply { setPadding(dp(20), dp(16), dp(12), dp(8)) }
+        header = row().apply { setPadding(dp(20), dp(16), dp(12), dp(8)) }
         val labels = column(); title = text("MilkZip", 27f).apply { setTypeface(null, Typeface.BOLD) }
         subtitle = text("轻松解压，一层到底", 12f, muted)
         labels.addView(title); labels.addView(subtitle)
@@ -143,8 +210,26 @@ class MainActivity : Activity() {
         header.addView(button("＋") { mainMenu() }, LinearLayout.LayoutParams(dp(48), dp(48)))
         root.addView(header)
         body = FrameLayout(this); root.addView(body, LinearLayout.LayoutParams(-1, 0, 1f))
-        mini = text("", 13f, green).apply { setPadding(dp(20), dp(12), dp(20), dp(12)); background = rounded(tint, 0); setOnClickListener { switchTab(1) } }
-        root.addView(mini)
+        miniBar = row().apply { setPadding(dp(16), 0, dp(8), 0); setBackgroundColor(surface) }
+        mini = text("", 13f, ink).apply {
+            minHeight = dp(48)
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.END
+            setOnClickListener {
+                if (Tasks.state != null) switchTab(1) else inlineResult?.let(::report)
+            }
+        }
+        miniAction = flatAction("详情") {
+            val record = inlineResult
+            if (Tasks.state != null) switchTab(1)
+            else if (record != null && record.code == 0 && record.output != null) openResults(record)
+            else if (record != null) report(record)
+        }
+        miniClose = flatAction("关闭") { inlineResult = null; updateTaskViews() }
+        miniBar.addView(mini, LinearLayout.LayoutParams(0, -2, 1f))
+        miniBar.addView(miniAction)
+        miniBar.addView(miniClose)
+        root.addView(miniBar)
         nav = row().apply { setPadding(dp(12), dp(8), dp(6), dp(8)); setBackgroundColor(surface) }
         root.addView(nav); setContentView(root)
         WindowCompat.getInsetsController(window, root).isAppearanceLightNavigationBars = !dark
@@ -169,12 +254,16 @@ class MainActivity : Activity() {
             AlertDialog.Builder(this).setTitle("密码本有未保存的修改").setPositiveButton("保存") { _, _ -> if (savePasswords()) { tab = value; render() } }
                 .setNegativeButton("放弃修改") { _, _ -> passwordDirty = false; tab = value; render() }.setNeutralButton("继续编辑", null).show(); return
         }
-        tab = value; selected.clear()
+        if (tab == 0 && archive == null) folderScroll = captureScroll() ?: folderScroll
+        tab = value
         if (tab == 2) loadPasswords() else render()
     }
     private fun render() {
         if (tab == 2) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE) else if (prompt == null) window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
         renderNav(); body.removeAllViews(); activeText = null; activeProgress = null
+        listing = null
+        reloadFolder = {}
+        header.visibility = if (tab == 0) View.GONE else View.VISIBLE
         title.text = when (tab) { 1 -> "任务"; 2 -> "密码本"; else -> "MilkZip" }
         subtitle.text = when (tab) { 1 -> "进度、结果和处理报告"; 2 -> "仅保存在这台设备，按顺序尝试"; else -> "轻松解压，一层到底" }
         when (tab) { 0 -> renderFiles(); 1 -> renderTasks(); 2 -> renderPasswords() }
@@ -184,27 +273,85 @@ class MainActivity : Activity() {
     private fun loadedFiles() = (files + treeChildren.values.flatten()).distinctBy { it.location }
     private fun selectedFiles() = loadedFiles().filter { it.location in selected }
     private fun renderFiles() {
-        val layout = column(); body.addView(layout)
-        val quick = row().apply { setPadding(dp(16), dp(6), dp(10), dp(6)) }
-        quick.add(button("手机存储") { if (storage.allFiles) navigate(storage.fromFile(storage.shared)) else storageAccess() }, 1f)
-        quick.add(button("结果") { navigate(storage.fromFile(storage.results)) }, 1f)
-        quick.add(button("选文件") { pickFiles() }, 1f); layout.addView(quick)
-        val crumbs = row().apply { setPadding(dp(16), dp(4), dp(16), dp(6)) }
-        crumbs.addView(button("‹") { goUp() }, LinearLayout.LayoutParams(dp(48), dp(48)))
-        val path = archive?.let { it.source.name + if (it.prefix.isEmpty()) "" else " / ${it.prefix.trimEnd('/')}" }
-            ?: folder?.let { if (it.isDocument) "已授权 / ${it.name}" else it.location.removePrefix(storage.shared.path).ifEmpty { "内部存储" } }.orEmpty()
-        crumbs.addView(text(path, 13f, muted).apply { maxLines = 2; setPadding(dp(8), 0, 0, 0); setOnClickListener { archive?.let(::archiveInfo) ?: folderInfo() } }, LinearLayout.LayoutParams(0, -2, 1f))
-        layout.addView(crumbs)
-        val tools = row().apply { setPadding(dp(16), 0, dp(16), dp(8)) }
-        val search = EditText(this).apply { hint = "搜索当前目录"; textSize = 14f; setSingleLine(); setTextColor(ink); setHintTextColor(muted); background = rounded(surface, 12); setPadding(dp(10), dp(10), dp(10), dp(10)); setText(query) }
-        tools.addView(search, LinearLayout.LayoutParams(0, dp(48), 1f))
-        if (archive == null) tools.addView(button("多选") { selectionMode = !selectionMode; selected.clear(); refreshCurrentListing() }.apply { setPadding(dp(4), 0, dp(4), 0) }, LinearLayout.LayoutParams(dp(60), dp(48)))
-        tools.addView(button("视图") { displayMenu() }.apply { setPadding(dp(4), 0, dp(4), 0) }, LinearLayout.LayoutParams(dp(60), dp(48)))
-        tools.addView(button("排序") { sortMenu() }.apply { setPadding(dp(4), 0, dp(4), 0) }, LinearLayout.LayoutParams(dp(60), dp(48))); layout.addView(tools)
+        val layout = column()
+        body.addView(layout)
+        val current = archive
+        val currentFolder = requireNotNull(folder)
+        val details = column()
+        val directoryName = current?.prefix?.trimEnd('/')?.substringAfterLast('/')?.takeIf { it.isNotEmpty() }
+            ?: current?.source?.name ?: directoryLabel(currentFolder)
+        val locationTitle = text(directoryName, 22f).apply {
+            setTypeface(null, Typeface.BOLD)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+        }
+        val itemCount = text("", 12f, muted)
+        details.addView(locationTitle)
+        details.addView(itemCount)
+        val toolbar = row().apply { setPadding(dp(4), dp(6), dp(4), dp(4)) }
+        fun addIcon(icon: Int, label: String, click: (View) -> Unit) {
+            toolbar.addView(iconAction(icon, label, click), LinearLayout.LayoutParams(dp(48), dp(48)))
+        }
+        addIcon(R.drawable.ic_back, "返回上一级") { goUp() }
+        toolbar.addView(details, LinearLayout.LayoutParams(0, -2, 1f))
+        addIcon(R.drawable.ic_add, "添加") { mainMenu() }
+        addIcon(R.drawable.ic_search, "搜索") {
+            searchOpen = !searchOpen
+            if (!searchOpen) query = ""
+            if (current == null) folderScroll = captureScroll()
+            render()
+            if (searchOpen) body.findViewWithTag<EditText>("folder-search")?.let { field ->
+                field.requestFocus()
+                field.post { getSystemService(android.view.inputmethod.InputMethodManager::class.java).showSoftInput(field, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT) }
+            }
+        }
+        addIcon(R.drawable.ic_more, "目录操作") { showFolderMenu(it) }
+        layout.addView(toolbar)
+        val path = current?.let { it.source.name + if (it.prefix.isEmpty()) "" else " › " + it.prefix.trimEnd('/').replace("/", " › ") }
+            ?: folderPath(currentFolder)
+        layout.addView(text(path, 13f, muted).apply {
+            setPadding(dp(16), 0, dp(16), 0)
+            minHeight = dp(32)
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.START
+            setOnClickListener { current?.let(::archiveInfo) ?: folderInfo() }
+        })
+        if (current == null) {
+            val shortcuts = row().apply { setPadding(dp(8), 0, dp(8), 0) }
+            fun shortcut(label: String, click: () -> Unit) {
+                shortcuts.addView(flatAction(label, click), LinearLayout.LayoutParams(0, dp(48), 1f))
+            }
+            shortcut("手机存储") { if (storage.allFiles) navigate(storage.fromFile(storage.shared)) else storageAccess() }
+            shortcut("结果") { navigate(storage.fromFile(storage.results)) }
+            shortcut("选文件") { pickFiles() }
+            shortcut("多选") { selectionMode = !selectionMode; selected.clear(); refreshCurrentListing() }
+            layout.addView(shortcuts)
+        }
+        val search = EditText(this).apply {
+            tag = "folder-search"
+            hint = "搜索当前目录"
+            textSize = 15f
+            setSingleLine()
+            setTextColor(ink)
+            setHintTextColor(muted)
+            background = rounded(surface, 12)
+            setPadding(dp(14), 0, dp(14), 0)
+            setText(query)
+            visibility = if (searchOpen || query.isNotEmpty()) View.VISIBLE else View.GONE
+        }
+        layout.addView(search, LinearLayout.LayoutParams(-1, dp(48)).apply {
+            marginStart = dp(16)
+            marginEnd = dp(16)
+            bottomMargin = dp(6)
+        })
         val selection = column().apply { setPadding(dp(16), 0, dp(16), dp(8)) }; layout.addView(selection)
         val panel = FrameLayout(this); layout.addView(panel, LinearLayout.LayoutParams(-1, 0, 1f))
         val list: AbsListView = if (viewMode == "grid") GridView(this).apply { numColumns = GridView.AUTO_FIT; columnWidth = dp(104); horizontalSpacing = dp(6); verticalSpacing = dp(6); stretchMode = GridView.STRETCH_COLUMN_WIDTH }
-            else ListView(this).apply { divider = null }
+            else ListView(this).apply {
+                divider = android.graphics.drawable.ColorDrawable(if (dark) 0xFF2C333C.toInt() else 0xFFE3E7EC.toInt())
+                dividerHeight = dp(1).coerceAtLeast(1)
+            }
+        listing = list
         list.setPadding(dp(12), 0, dp(12), dp(8)); list.clipToPadding = false
         val empty = text("读取中…", 14f, muted).apply { gravity = Gravity.CENTER; setPadding(dp(24), dp(24), dp(24), dp(24)) }
         panel.addView(list); panel.addView(empty, FrameLayout.LayoutParams(-1, -1)); list.emptyView = empty
@@ -231,7 +378,10 @@ class MainActivity : Activity() {
                     if (archive == null && viewMode == "tree" && node.location in expanded && depth < 32) treeChildren[node.location]?.let { append(it, depth + 1) }
                 }
             }
-            append(files, 0); visible = rows; adapter.update(rows)
+            append(files, 0)
+            visible = rows
+            adapter.update(rows)
+            itemCount.text = if (query.isEmpty()) "共 ${files.size} 项" else "${rows.size} 项匹配"
             selection.removeAllViews(); selection.visibility = if (selectionMode && archive == null) View.VISIBLE else View.GONE
             if (selectionMode && archive == null) {
                 val header = row(); header.addView(text("已选 ${selected.size} 项", 13f, muted), LinearLayout.LayoutParams(0, -2, 1f))
@@ -274,25 +424,88 @@ class MainActivity : Activity() {
             val actions = row().apply { setPadding(dp(16), dp(8), dp(10), dp(10)) }
             actions.add(button("一键解压", true) { quickExtract(archive!!.source, emptyList()) }, 1.6f)
             actions.add(button("选项") { extractDialog(archive!!.source, emptyList()) }, 1f)
-            actions.add(button("检查") { submit(Job("test", listOf(archive!!.source), staged = archive!!.staged), true) }, 1f)
+            actions.add(button("检查") { submit(Job("test", listOf(archive!!.source), staged = archive!!.staged)) }, 1f)
             actions.add(button("原包") {
                 val source = archive!!.source
                 fileMenu(source) { closeArchive(); selectionMode = true; selected.add(source.location); render() }
             }, 1f)
             layout.addView(actions); refresh()
         } else {
-            refresh(); val token = ++epoch; loading = true
-            io.execute {
-                val result = runCatching { storage.children(requireNotNull(folder)) }
-                runOnUiThread {
-                    if (token != epoch || tab != 0 || archive != null || isDestroyed) return@runOnUiThread
-                    loading = false
-                    result.fold({ files = it; selected.retainAll(loadedFiles().map { node -> node.location }.toSet()); refresh() }, { files = emptyList(); refresh(); empty.text = it.message ?: "无法读取目录" })
+            reloadFolder = {
+                val anchor = captureScroll() ?: folderScroll
+                val token = ++epoch
+                val openDirs = expanded.toSet()
+                loading = true
+                refresh()
+                io.execute {
+                    val result = runCatching {
+                        val children = storage.children(currentFolder)
+                        val refreshed = mutableMapOf<String, List<Node>>()
+                        fun readExpanded(nodes: List<Node>, depth: Int) {
+                            if (depth >= 32) return
+                            for (node in nodes) {
+                                if (!node.directory || node.location !in openDirs) continue
+                                val contents = runCatching { storage.children(node) }.getOrNull() ?: continue
+                                refreshed[node.location] = contents
+                                readExpanded(contents, depth + 1)
+                            }
+                        }
+                        if (openDirs.isNotEmpty()) readExpanded(children, 0)
+                        children to refreshed
+                    }
+                    runOnUiThread {
+                        if (token != epoch || listing !== list || tab != 0 || archive != null || isDestroyed) return@runOnUiThread
+                        loading = false
+                        result.fold({ (children, refreshed) ->
+                            files = children
+                            for (location in openDirs) treeChildren.remove(location)
+                            treeChildren.putAll(refreshed)
+                            expanded.retainAll(refreshed.keys + (expanded - openDirs))
+                            selected.retainAll(loadedFiles().map { it.location }.toSet())
+                            refresh()
+                            if (anchor != null && visible.isNotEmpty()) {
+                                val match = visible.indexOfFirst { it.location == anchor.location }
+                                val position = if (match >= 0) match else anchor.position.coerceIn(0, visible.lastIndex)
+                                list.setSelectionFromTop(position, anchor.top)
+                            }
+                            folderScroll = null
+                        }, {
+                            files = emptyList()
+                            treeChildren.clear()
+                            selected.clear()
+                            refresh()
+                            empty.text = it.message ?: "无法读取目录"
+                        })
+                    }
                 }
             }
+            reloadFolder()
         }
     }
-    private data class FileCell(val container: LinearLayout, val icon: TextView, val more: TextView, val name: TextView, val detail: TextView)
+    private fun directoryLabel(node: Node): String = when (node.location) {
+        storage.results.path -> "解压结果"
+        storage.shared.path -> "全部文件"
+        else -> node.name
+    }
+    private fun folderPath(node: Node): String {
+        if (node.isDocument) return (listOf("已授权") + (parents + node).map { it.name }).joinToString(" › ")
+        for ((root, label) in listOf(storage.results to "解压结果", storage.shared to "全部文件")) {
+            val relative = node.location.removePrefix(root.path + "/")
+            if (node.location == root.path) return label
+            if (relative != node.location) return "$label › " + relative.replace("/", " › ")
+        }
+        return node.location
+    }
+    private fun showFolderMenu(anchor: View) {
+        val menu = PopupMenu(this, anchor)
+        val items = listOf("视图" to { displayMenu() }, "排序" to { sortMenu() }, "刷新" to {
+            if (archive == null) reloadFolder() else archive?.let { listArchive(it.source, emptyList(), it.prefix, it.staged) }
+        }, "设置" to { settings() })
+        items.forEachIndexed { index, item -> menu.menu.add(0, index, index, item.first) }
+        menu.setOnMenuItemClickListener { items[it.itemId].second(); true }
+        menu.show()
+    }
+    private data class FileCell(val container: LinearLayout, val icon: ImageView, val more: TextView, val name: TextView, val detail: TextView)
     private inner class FileAdapter(private var rows: List<Node>, private val grid: Boolean = viewMode == "grid") : BaseAdapter() {
         fun update(value: List<Node>) { rows = value; notifyDataSetChanged() }
         override fun getCount() = rows.size
@@ -301,32 +514,78 @@ class MainActivity : Activity() {
         override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
             val cell = convertView?.tag as? FileCell ?: run {
                 val container = if (grid) column() else row()
-                container.minimumHeight = dp(if (grid) 140 else 72)
-                val icon = text("", 26f, green).apply { gravity = Gravity.CENTER; background = rounded(tint, 12) }
+                container.minimumHeight = dp(if (grid) 112 else 68)
+                val icon = ImageView(this@MainActivity).apply {
+                    scaleType = ImageView.ScaleType.CENTER_INSIDE
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                }
                 val more = text("", 22f, muted).apply { gravity = Gravity.CENTER; minimumHeight = dp(48) }
                 if (grid) {
                     val head = row(); head.addView(icon, LinearLayout.LayoutParams(0, dp(56), 1f)); head.addView(more, LinearLayout.LayoutParams(dp(36), dp(48))); container.add(head)
                 } else container.addView(icon, LinearLayout.LayoutParams(dp(44), dp(48)))
                 val labels = column().apply { if (!grid) setPadding(dp(12), 0, dp(4), 0) }
-                val name = text("", if (grid) 14f else 16f).apply { maxLines = 2 }
-                val detail = text("", 12f, muted).apply { maxLines = 1 }; labels.add(name); labels.add(detail)
+                val name = text("", if (grid) 14f else 16f).apply {
+                    maxLines = 2
+                    ellipsize = TextUtils.TruncateAt.END
+                }
+                val detail = text("", 12f, muted).apply { maxLines = 1 }
+                labels.addView(name); labels.addView(detail)
                 if (grid) container.add(labels) else { container.addView(labels, LinearLayout.LayoutParams(0, -2, 1f)); container.addView(more, LinearLayout.LayoutParams(dp(40), dp(48))) }
                 FileCell(container, icon, more, name, detail).also { container.tag = it }
             }
             val node = rows[position]; val checked = node.location in selected
             cell.container.setPadding(dp(8 + if (grid) 0 else (fileDepths[node.location] ?: 0).coerceAtMost(8) * 16), dp(6), dp(6), dp(6))
-            cell.container.background = rounded(if (checked) tint else bg, 12)
-            cell.icon.text = if (checked) "✓" else if (node.directory) "▰" else "▤"
+            cell.container.background = if (checked) rounded(tint, 8) else null
+            cell.container.isActivated = checked
+            cell.icon.setImageResource(when {
+                checked -> R.drawable.ic_selected
+                node.directory -> R.drawable.ic_folder
+                else -> R.drawable.ic_file
+            })
+            cell.icon.imageTintList = if (checked) ColorStateList.valueOf(green) else null
             cell.name.text = (if (viewMode == "tree" && node.directory && archive == null) if (node.location in expanded) "▾ " else "▸ " else "") + node.name
             cell.detail.text = (if (node.directory) "文件夹" else Rules.size(node.size)) + if (!grid && node.modified > 0) " · " + DateFormat.getDateInstance(DateFormat.SHORT).format(Date(node.modified)) else ""
-            cell.more.text = if (archive != null) if (node.directory) "›" else "" else "⋮"
+            cell.more.text = if (node.directory && !grid) "›" else if (archive == null) "⋮" else ""
             cell.more.contentDescription = "更多操作：${node.name}"
-            cell.more.setOnClickListener(if (archive == null) View.OnClickListener { fileMenu(node) { selectionMode = true; selected.add(node.location); refreshCurrentListing() } } else null)
+            cell.more.setOnClickListener(if (archive == null) View.OnClickListener {
+                if (node.directory && !grid && viewMode != "tree" && !selectionMode) {
+                    folder?.let { parents.add(it) }
+                    navigate(node, clearParents = false)
+                } else if (selectionMode) {
+                    if (!selected.add(node.location)) selected.remove(node.location)
+                    refreshCurrentListing()
+                } else {
+                    fileMenu(node) { selectionMode = true; selected.add(node.location); refreshCurrentListing() }
+                }
+            } else null)
+            if (node.directory && !grid && viewMode == "list" && !selectionMode)
+                cell.more.contentDescription = "打开 ${node.name}"
             return cell.container
         }
     }
-    private fun navigate(node: Node, clearParents: Boolean = true) { if (clearParents) parents.clear(); folder = node; archive = null; query = ""; files = emptyList(); selected.clear(); selectionMode = false; expanded.clear(); treeChildren.clear(); epoch++; tab = 0; render() }
-    private fun closeArchive() { archive = null; files = emptyList(); selected.clear(); selectionMode = false; expanded.clear(); treeChildren.clear(); query = ""; render() }
+    private fun navigate(node: Node, clearParents: Boolean = true) {
+        if (clearParents) parents.clear()
+        folder = node
+        archive = null
+        query = ""
+        searchOpen = false
+        folderScroll = null
+        files = emptyList()
+        selected.clear()
+        selectionMode = false
+        expanded.clear()
+        treeChildren.clear()
+        epoch++
+        tab = 0
+        render()
+    }
+    private fun closeArchive() {
+        archive = null
+        files = emptyList()
+        archiveQuery = ""
+        searchOpen = folderQuery.isNotEmpty()
+        render()
+    }
     private fun goUp() {
         val page = archive
         if (page != null) {
@@ -334,14 +593,27 @@ class MainActivity : Activity() {
         } else if (parents.isNotEmpty()) navigate(parents.removeAt(parents.lastIndex), false)
         else if (folder?.isDocument == false && folder!!.file.canonicalPath != storage.shared.canonicalPath && folder!!.file.canonicalPath != storage.results.canonicalPath) {
             folder!!.file.parentFile?.let { parent ->
-                if (parent.canonicalPath.startsWith(storage.shared.canonicalPath) || parent.canonicalPath.startsWith(storage.results.canonicalPath)) navigate(storage.fromFile(parent))
+                if (!atStorageRoot()) navigate(storage.fromFile(parent))
             }
         }
     }
+    private fun atStorageRoot(): Boolean {
+        val path = folder?.file?.canonicalPath ?: return true
+        return path == storage.shared.canonicalPath || path == storage.results.canonicalPath ||
+            (!path.startsWith(storage.shared.canonicalPath + "/") && !path.startsWith(storage.results.canonicalPath + "/"))
+    }
     @Deprecated("Deprecated in Java") override fun onBackPressed() {
-        if (selectionMode || selected.isNotEmpty()) { selected.clear(); selectionMode = false; render(); return }
+        if (tab == 0 && (selectionMode || selected.isNotEmpty())) {
+            selected.clear()
+            selectionMode = false
+            refreshCurrentListing()
+            return
+        }
         if (tab != 0) { switchTab(0); return }
-        if (archive != null || parents.isNotEmpty()) { goUp(); return }
+        if (archive != null || parents.isNotEmpty() || (!atStorageRoot() && folder?.isDocument == false)) {
+            goUp()
+            return
+        }
         super.onBackPressed()
     }
     private fun sortMenu() {
@@ -350,9 +622,9 @@ class MainActivity : Activity() {
     }
     private fun fileMenu(node: Node, select: () -> Unit) {
         AlertDialog.Builder(this).setTitle(node.name).setItems(arrayOf("打开压缩包", "一键解压", "解压选项…", "检查完整性", "选择 / 多选", "文件信息", "分享文件", "用其他应用打开", "删除")) { _, i -> when (i) {
-            0 -> listArchive(node, files); 1 -> if (node.directory) notify("请选择压缩包文件") else quickExtract(node, files)
-            2 -> if (node.directory) notify("请选择压缩包文件") else extractDialog(node, files)
-            3 -> if (node.directory) notify("请选择压缩包文件") else submit(Job("test", listOf(node), files), true)
+            0 -> listArchive(node, loadedFiles()); 1 -> if (node.directory) notify("请选择压缩包文件") else quickExtract(node, loadedFiles())
+            2 -> if (node.directory) notify("请选择压缩包文件") else extractDialog(node, loadedFiles())
+            3 -> if (node.directory) notify("请选择压缩包文件") else submit(Job("test", listOf(node), loadedFiles()))
             4 -> select(); 5 -> nodeInfo(node); 6 -> if (node.directory) notify("文件夹可以先打包为 ZIP") else share(node); 7 -> if (!node.directory) openWith(node)
             8 -> deleteFiles(listOf(node))
         } }.show()
@@ -363,7 +635,7 @@ class MainActivity : Activity() {
         AlertDialog.Builder(this).setTitle("删除 ${nodes.size} 项？")
             .setMessage(names + (if (nodes.size > 5) "\n等 ${nodes.size} 项" else "") + "\n\n文件夹内的所有内容也会删除。此操作无法撤销。")
             .setNegativeButton("取消", null).setPositiveButton("删除") { _, _ ->
-                submit(Job("delete", ArchivePlan.deletionRoots(nodes)), true); selected.clear(); selectionMode = false; expanded.clear(); treeChildren.clear()
+                if (submit(Job("delete", ArchivePlan.deletionRoots(nodes)))) clearSelection()
             }.show()
     }
     private fun mainMenu() {
@@ -412,7 +684,7 @@ class MainActivity : Activity() {
             108 -> data.data?.let { uri ->
                 persist(uri, data)
                 prefs.getString("export-pending", null)?.let { path ->
-                    submit(Job("export", listOf(storage.fromFile(File(path))), exportTree = uri.toString()), true)
+                    submit(Job("export", listOf(storage.fromFile(File(path))), exportTree = uri.toString()))
                     prefs.edit().remove("export-pending").apply()
                 }
             }
@@ -463,15 +735,16 @@ class MainActivity : Activity() {
     }
     private fun listArchive(node: Node, siblings: List<Node>, prefix: String = "", staged: File? = null) {
         if (node.directory) { navigate(node); return }
-        submit(Job("list", listOf(node), siblings, prefix, staged), false)
+        submit(Job("list", listOf(node), siblings, prefix, staged))
     }
-    private fun submit(job: Job, showTasks: Boolean): Boolean {
+    private fun submit(job: Job): Boolean {
         try {
             if (!Tasks.submit(job)) { notify("已有任务正在运行，可在任务页取消"); return false }
             if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED && !prefs.getBoolean("notification-asked", false)) {
                 prefs.edit().putBoolean("notification-asked", true).apply(); requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 107)
             }
-            if (showTasks) { tab = 1; render() }
+            inlineResult = null
+            updateTaskViews()
             return true
         } catch (error: Exception) { failure(error); return false }
     }
@@ -482,7 +755,7 @@ class MainActivity : Activity() {
         submit(Job("extract", listOf(source), if (siblings.isNotEmpty()) siblings else externalSources,
             staged = cached, settings = options,
             parent = if (tree == null && !source.isDocument && source.file.parentFile?.canWrite() == true) source.file.parentFile else null,
-            name = Rules.resultName(source.name), exportTree = tree), true)
+            name = Rules.resultName(source.name), exportTree = tree))
     }
     private fun extractDialog(source: Node, siblings: List<Node>, initial: ExtractSettings? = null, initialName: String = "") {
         if (Tasks.state != null) { notify("请先等待或取消当前任务"); return }
@@ -523,10 +796,16 @@ class MainActivity : Activity() {
                     val choice = locations[location.selectedItemPosition]
                     val siblingFiles = if (siblings.isNotEmpty()) siblings else externalSources
                     val staged = archive?.takeIf { it.source.location == source.location }?.staged
-                    submit(Job("extract", listOf(source), siblingFiles, staged = staged, settings = s,
-                        parent = if (choice == "原文件所在目录") source.file.parentFile else null, name = outputName,
-                        exportTree = if (choice == "已授权的输出文件夹") tree else null), true)
-                    pendingExtract = null; dialog.dismiss()
+                    val job = Job(
+                        "extract", listOf(source), siblingFiles, staged = staged, settings = s,
+                        parent = if (choice == "原文件所在目录") source.file.parentFile else null,
+                        name = outputName,
+                        exportTree = if (choice == "已授权的输出文件夹") tree else null
+                    )
+                    if (submit(job)) {
+                        pendingExtract = null
+                        dialog.dismiss()
+                    }
                 } catch (error: Exception) { failure(error) }
             }
         }
@@ -572,8 +851,8 @@ class MainActivity : Activity() {
             val seed = value.toCharArray(); password.text.clear()
             val settings = ExtractSettings(recursive.isChecked, false, keep.isChecked, 32, prefs.getLong("limit", 64L shl 30), delete.isChecked)
             if (submit(Job("extractBatch", roots, siblings, settings = settings, sameDirectory = sameDirectory.isChecked,
-                    exportTree = if (sameDirectory.isChecked) null else prefs.getString("output-tree", null), initialPassword = seed), true)) {
-                selected.clear(); selectionMode = false; dialog.dismiss()
+                    exportTree = if (sameDirectory.isChecked) null else prefs.getString("output-tree", null), initialPassword = seed))) {
+                clearSelection(); dialog.dismiss()
             } else seed.fill('\u0000')
         } }
         dialog.show()
@@ -589,7 +868,7 @@ class MainActivity : Activity() {
         AlertDialog.Builder(this).setTitle("创建 ZIP").setMessage("${nodes.size} 项；ZIP 存储模式，不压缩、不加密。结果保存在应用结果目录。")
             .setView(padded(column(), 20).apply { add(edit) }).setPositiveButton("创建", null).setNegativeButton("取消", null).create().apply {
                 setOnShowListener { getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                    runCatching { val name = edit.text.toString().let { if (it.endsWith(".zip", true)) it else "$it.zip" }; Rules.safeName(name); submit(Job("zip", nodes, name = name), true); selected.clear(); dismiss() }.onFailure(::failure)
+                    runCatching { val name = edit.text.toString().let { if (it.endsWith(".zip", true)) it else "$it.zip" }; Rules.safeName(name); if (submit(Job("zip", nodes, name = name))) { clearSelection(); dismiss() } }.onFailure(::failure)
                 } }; show()
             }
     }
@@ -629,36 +908,67 @@ class MainActivity : Activity() {
             (getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(ClipData.newPlainText("MilkZip 任务报告", record.title + "\n" + record.detail)); notify("报告已复制")
         }.show()
     }
+    private fun clearSelection() {
+        selected.clear()
+        selectionMode = false
+        if (tab == 0) refreshCurrentListing()
+    }
+
     private fun updateTask() {
+        var returnedFromArchive = false
         if (Tasks.pageVersion != pageVersion) {
             pageVersion = Tasks.pageVersion
-            if (Tasks.page == null) { archive = null; files = emptyList(); selected.clear(); selectionMode = false; if (tab == 0) render() }
-            Tasks.page?.let { archive = it; files = it.rows; query = ""; tab = 0; selected.clear(); render() }
+            val page = Tasks.page
+            if (page == null) {
+                if (archive != null) {
+                    returnedFromArchive = true
+                    if (tab == 0) closeArchive() else { archive = null; files = emptyList() }
+                }
+            } else {
+                if (tab == 0 && archive == null) folderScroll = captureScroll() ?: folderScroll
+                archive = page
+                files = page.rows
+                archiveQuery = ""
+                if (tab == 0) render()
+            }
         }
         val latest = Tasks.records.firstOrNull()
-        if (latest?.id != latestRecord) {
+        if (Tasks.state == null && latest?.id != latestRecord) {
             latestRecord = latest?.id
             if (tab == 1) render()
             if (tab == 2 && !passwordDirty) loadPasswords()
-            if (latest != null && resumed) {
-                notify(Rules.resultLabel(latest.code) + " · " + latest.title)
+            if (latest != null && latest.kind != "list") {
+                inlineResult = latest
+                if (!returnedFromArchive && tab == 0 && archive == null &&
+                    latest.kind in setOf("extract", "extractBatch", "zip", "delete", "export")) {
+                    reloadFolder()
+                }
+            }
+            if (latest != null && resumed && tab == 0) {
                 Tasks.openFailure?.takeIf { it.recordId == latest.id }?.let { failure ->
                     AlertDialog.Builder(this).setTitle("无法按压缩包打开").setMessage("${failure.source.name}\n可能是普通文件，或使用了尚不支持的压缩格式。")
                         .setPositiveButton("用其他应用打开") { _, _ -> openWith(failure.source) }.setNeutralButton("查看报告") { _, _ -> report(latest) }.setNegativeButton("关闭", null).show()
                 }
             }
         }
-        updateTaskViews(); showPrompt()
+        updateTaskViews()
+        showPrompt()
     }
     private fun updateTaskViews() {
-        val s = Tasks.state
-        mini.visibility = if (s == null) View.GONE else View.VISIBLE
-        if (s != null) {
-            val fraction = if (s.total > 0) " · ${Rules.size(s.done)} / ${Rules.size(s.total)}" else ""
-            mini.text = s.phase + fraction + "  ›"
-            activeText?.text = s.title + "\n" + s.phase + fraction
-            activeProgress?.isIndeterminate = s.total <= 0
-            activeProgress?.progress = if (s.total > 0) (s.done.toDouble() / s.total * 1000).toInt().coerceIn(0, 1000) else 0
+        val state = Tasks.state
+        val result = inlineResult
+        miniBar.visibility = if (tab == 0 && (state != null || result != null)) View.VISIBLE else View.GONE
+        miniClose.visibility = if (state == null && result != null) View.VISIBLE else View.GONE
+        if (state != null) {
+            val fraction = if (state.total > 0) " · ${Rules.size(state.done)} / ${Rules.size(state.total)}" else ""
+            mini.text = state.phase + fraction
+            miniAction.text = "进度"
+            activeText?.text = state.title + "\n" + state.phase + fraction
+            activeProgress?.isIndeterminate = state.total <= 0
+            activeProgress?.progress = if (state.total > 0) (state.done.toDouble() / state.total * 1000).toInt().coerceIn(0, 1000) else 0
+        } else if (result != null) {
+            mini.text = Rules.resultLabel(result.code) + " · " + result.title
+            miniAction.text = if (result.code == 0 && result.output != null) "查看结果" else "详情"
         }
     }
     private fun showPrompt() {
