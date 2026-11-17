@@ -316,17 +316,21 @@ class MainActivity : Activity() {
             ellipsize = TextUtils.TruncateAt.START
             setOnClickListener { current?.let(::archiveInfo) ?: folderInfo() }
         })
-        if (current == null) {
-            val shortcuts = row().apply { setPadding(dp(8), 0, dp(8), 0) }
-            fun shortcut(label: String, click: () -> Unit) {
-                shortcuts.addView(flatAction(label, click), LinearLayout.LayoutParams(0, dp(48), 1f))
-            }
-            shortcut("手机存储") { if (storage.allFiles) navigate(storage.fromFile(storage.shared)) else storageAccess() }
-            shortcut("结果") { navigate(storage.fromFile(storage.results)) }
-            shortcut("选文件") { pickFiles() }
-            shortcut("多选") { selectionMode = !selectionMode; selected.clear(); refreshCurrentListing() }
-            layout.addView(shortcuts)
+        val shortcuts = row().apply { setPadding(dp(8), 0, dp(8), 0) }
+        fun shortcut(label: String, click: () -> Unit) {
+            shortcuts.addView(flatAction(label, click), LinearLayout.LayoutParams(0, dp(48), 1f))
         }
+        shortcut("手机存储") {
+            if (storage.allFiles) navigate(storage.fromFile(storage.shared)) else storageAccess()
+        }
+        shortcut("结果") { navigate(storage.fromFile(storage.results)) }
+        shortcut("选文件") { pickFiles() }
+        if (current == null) shortcut("多选") {
+            selectionMode = !selectionMode
+            selected.clear()
+            refreshCurrentListing()
+        }
+        layout.addView(shortcuts)
         val search = EditText(this).apply {
             tag = "folder-search"
             hint = "搜索当前目录"
