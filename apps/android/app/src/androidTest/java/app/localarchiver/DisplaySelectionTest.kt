@@ -82,7 +82,8 @@ class DisplaySelectionTest {
         for ((file, asset) in listOf("a.7删z" to "bcj2.7z", "b.zip" to "inner.zip")) {
             inst.context.assets.open("fixtures/$asset").use { input -> File(root, file).outputStream().use { input.copyTo(it) } }
         }
-        prefs.edit().putString("view-mode", "list").commit()
+        // The batch workflow must work when notification permission is declined.
+        prefs.edit().putString("view-mode", "list").putBoolean("notification-asked", true).commit()
         try {
             ActivityScenario.launch(MainActivity::class.java).use {
                 onView(withText("结果")).perform(click()); waitFor { hasText(root.name) }; onView(withText(root.name)).perform(click()); waitFor { hasText("a.7删z") }
