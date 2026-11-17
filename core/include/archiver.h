@@ -111,6 +111,9 @@ ARCHIVER_API ArchiverResult archiver_open_with_passwords(const char *archive_pat
 
 /* Check archive bytes without writing them. */
 ARCHIVER_API ArchiverResult archiver_test(ArchiverArchive *archive, const char *password);
+ARCHIVER_API ArchiverResult archiver_test_with_progress(
+    ArchiverArchive *archive, const char *password,
+    ArchiverProgressCallback progress, void *user);
 
 /* Store the named files into a new ZIP. Names inside the ZIP are the file
    basenames. This does not create RAR. */

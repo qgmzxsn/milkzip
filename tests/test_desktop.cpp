@@ -54,8 +54,10 @@ class DesktopTests : public QObject {
   void openAndExtract() {
     QTemporaryDir temp(QDir::currentPath() + "/desktop-test-XXXXXX");
     QVERIFY(temp.isValid());
-    const QString path = temp.path() + QStringLiteral("/测试😀.zip");
-    QVERIFY(makeArchive(temp.path(), path, "gui contents"));
+    const QString original = temp.path() + QStringLiteral("/测试😀.7z");
+    const QString path = temp.path() + QStringLiteral("/测试😀.7删z");
+    QVERIFY(makeArchive(temp.path(), original, "gui contents"));
+    QVERIFY(QFile::rename(original, path));
     MainWindow window;
     auto *extract = window.findChild<QPushButton *>("extractButton");
     QVERIFY(!extract->isEnabled());

@@ -80,7 +80,6 @@ struct ArchiveRow {
   bool directory = false;
   bool symlink = false;
   bool parent = false;
-  bool archive = false;
   bool hasPacked = false;
 };
 
@@ -265,42 +264,6 @@ int reportProgress(uint64_t completed, uint64_t total, void *user) {
   state->completed.store(completed, std::memory_order_relaxed);
   state->total.store(total, std::memory_order_relaxed);
   return state->cancel.load(std::memory_order_relaxed) ? 1 : 0;
-}
-
-bool looksLikeArchive(const QString &name) {
-  const QString lower = name.toLower();
-  static const QStringList suffixes = {
-      QStringLiteral(".zip"), QStringLiteral(".7z"), QStringLiteral(".tar"),
-      QStringLiteral(".tgz"), QStringLiteral(".tar.gz"), QStringLiteral(".tbz"),
-      QStringLiteral(".tbz2"), QStringLiteral(".tar.bz2"), QStringLiteral(".txz"),
-      QStringLiteral(".tar.xz"), QStringLiteral(".tzst"), QStringLiteral(".tar.zst"),
-      QStringLiteral(".rar"), QStringLiteral(".mp4"), QStringLiteral(".m4v"),
-      QStringLiteral(".mov"), QStringLiteral(".jpg"), QStringLiteral(".jpeg"),
-      QStringLiteral(".png"), QStringLiteral(".gif"), QStringLiteral(".bmp"),
-      QStringLiteral(".webp"), QStringLiteral(".avi"), QStringLiteral(".mkv"),
-      QStringLiteral(".webm"), QStringLiteral(".exe"), QStringLiteral(".sfx"),
-      QStringLiteral(".zipsc"), QStringLiteral(".gz"), QStringLiteral(".bz2"),
-      QStringLiteral(".xz"), QStringLiteral(".zst"), QStringLiteral(".zstd"),
-      QStringLiteral(".lz4"), QStringLiteral(".lzma"), QStringLiteral(".z"),
-      QStringLiteral(".cab"), QStringLiteral(".iso"), QStringLiteral(".udf"),
-      QStringLiteral(".wim"), QStringLiteral(".swm"), QStringLiteral(".arj"),
-      QStringLiteral(".lzh"), QStringLiteral(".lha"), QStringLiteral(".cpio"),
-      QStringLiteral(".ar"), QStringLiteral(".deb"), QStringLiteral(".rpm"),
-      QStringLiteral(".dmg"), QStringLiteral(".xar")};
-  for (const auto &suffix : suffixes)
-    if (lower.endsWith(suffix)) return true;
-  const int dot = lower.lastIndexOf(QLatin1Char('.'));
-  if (dot < 0) return false;
-  const QString ext = lower.mid(dot + 1);
-  if (ext.size() >= 2 && ext.size() <= 4) {
-    bool digits = true;
-    for (const QChar ch : ext) digits = digits && ch.isDigit();
-    if (digits) return true;
-  }
-  if (ext.size() == 3 && (ext[0] == QLatin1Char('z') || ext[0] == QLatin1Char('r')) &&
-      ext[1].isDigit() && ext[2].isDigit())
-    return true;
-  return lower.contains(QStringLiteral(".part")) && lower.endsWith(QStringLiteral(".rar"));
 }
 
 QString errorText(int code, const QString &detail) {
@@ -643,7 +606,6 @@ void MainWindow::browseDirectory(const QString &path) {
     row.modified = entry.lastModified().toSecsSinceEpoch();
     row.directory = entry.isDir();
     row.symlink = entry.isSymLink();
-    row.archive = !entry.isDir() && looksLikeArchive(entry.fileName());
     rows.push_back(row);
   }
   model_->setRows(rows);
